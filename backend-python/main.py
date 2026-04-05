@@ -1,0 +1,3148 @@
+# main.py
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import date, datetime, timedelta
+import logging
+import re
+
+from database.mongodb import (
+    item_collection,
+    tender_collection,
+    transaction_collection,
+    transaction_items_collection,
+    loyalty_customers_collection,
+    loyalty_transactions_collection,
+    cashier_collection,
+    supplier_collection,
+    categories_collection,
+    configuration_collection,
+    purchase_order_collection,
+    purchase_order_entries_collection,
+)
+from utils.printer import POSPrinter
+from utils.receipt_formatter import generate_plain_receipt
+from models import Item, Tender, TransactionData, LoyaltyCustomer, LoyaltyTransaction
+  # For printing receipts
+
+# =====================
+# LOGGING CONFIG
+# =====================
+logging.basicConfig(
+    filename="pos_backend.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+app = FastAPI(title="POS Backend API", version="1.0.2")
+
+
+class ERPItemCreate(BaseModel):
+    code: str
+    description: str
+    alias: str
+    category: str = ""
+    category_id: int = 0
+    price: float = 0.0
+    cost: float = 0.0
+    sale_price: Optional[float] = None
+    markup_percent: float = 0.0
+    bin_location: str = ""
+    stock: int = 0
+    reorder_level: float = 0.0
+    taxable: bool = False
+    consignment: bool = False
+
+
+class ERPItemUpdate(ERPItemCreate):
+    pass
+
+
+class ERPItemReorderLevelUpdate(BaseModel):
+    reorder_level: float = 0.0
+
+
+class ERPItemOut(BaseModel):
+    id: str
+    alias: str
+    lookup_code: str
+    description: str
+    price: float
+    cost: float
+    sale_price: float
+    stock_available: int
+    category: str
+    category_id: int = 0
+    bin_location: str
+    stock: int
+    reorder_level: float
+    markup_percent: float
+    taxable: bool
+    consignment: bool
+
+
+class ERPDashboardSummaryOut(BaseModel):
+    total_sales: float = 0.0
+    total_baskets: int = 0
+
+
+class ERPDashboardDailySalesPointOut(BaseModel):
+    date: str
+    label: str
+    sales: float = 0.0
+
+
+class ERPDashboardDailySalesOut(BaseModel):
+    date_from: date
+    date_to: date
+    total_sales: float = 0.0
+    points: List[ERPDashboardDailySalesPointOut] = []
+
+
+class ERPDashboardCategorySalesCategoryOut(BaseModel):
+    category: str
+    sales: float = 0.0
+
+
+class ERPDashboardCategorySalesOut(BaseModel):
+    date_from: date
+    date_to: date
+    total_sales: float = 0.0
+    categories: List[ERPDashboardCategorySalesCategoryOut] = []
+
+
+class ERPUserCreate(BaseModel):
+    number: str
+    password: str
+    name: Optional[str] = ""
+    user_role: str = "Cashier"
+    email_address: Optional[str] = ""
+    telephone: Optional[str] = ""
+    store_id: int = 1
+    floor_limit: float = 0
+    drop_limit: float = 0
+    priviledges: int = 0
+    enabled: bool = True
+
+
+class ERPUserOut(BaseModel):
+    id: int
+    number: str
+    name: str
+    user_role: str
+    email_address: str
+    telephone: str
+    floor_limit: float
+    drop_limit: float
+    enabled: bool
+    status: str
+    store_id: int
+    last_updated: datetime
+    has_fingerprint: bool = False
+    fingerprint_updated_at: Optional[datetime] = None
+
+
+class ERPUserUpdate(BaseModel):
+    number: str
+    password: Optional[str] = None
+    name: Optional[str] = ""
+    user_role: str = "Cashier"
+    email_address: Optional[str] = ""
+    telephone: Optional[str] = ""
+    floor_limit: float = 0
+    drop_limit: float = 0
+    enabled: bool = True
+
+
+class ERPCategoryCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = 0
+    parent: Optional[str] = ""
+    status: str = "Active"
+
+
+class ERPCategoryOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    parent: str
+    items: int = 0
+    status: str
+    last_updated: datetime
+
+
+class AuthConfigurationOut(BaseModel):
+    biometrics: bool
+    biometrics_value: int
+    fingerprint_match_threshold: int
+    enrolled_fingerprint_users: int
+    biometrics_bootstrap_required: bool
+
+
+class PasswordLoginRequest(BaseModel):
+    number: str
+    password: str
+
+
+class FingerprintEnrollmentRequest(BaseModel):
+    template_base64: str
+    template_format: str = "STANDARDPRO"
+    image_quality: Optional[int] = None
+    nfiq: Optional[int] = None
+    device_model: Optional[str] = ""
+    device_serial: Optional[str] = ""
+
+
+class FingerprintAuthCandidate(BaseModel):
+    id: int
+    number: str
+    name: str
+    user_role: str
+    store_id: int
+    template_base64: str
+    template_format: str
+    fingerprint_updated_at: Optional[datetime] = None
+
+
+class ERPSupplierCreate(BaseModel):
+    code: Optional[str] = ""
+    supplier_name: str
+    contact_name: Optional[str] = ""
+    phone_number: Optional[str] = ""
+    fax_number: Optional[str] = ""
+    email_address: Optional[str] = ""
+    web_page_address: Optional[str] = ""
+    address1: Optional[str] = ""
+    address2: Optional[str] = ""
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    country: Optional[str] = ""
+    zip: Optional[str] = ""
+    account_number: Optional[str] = ""
+    tax_number: Optional[str] = ""
+    currency_id: int = 0
+    terms: Optional[str] = ""
+    withhold: bool = False
+    grn_approval: bool = False
+    advance_pay: bool = False
+    approved: bool = False
+    po_blocked: bool = False
+    pay_blocked: bool = False
+    garage: bool = False
+    approved_by: Optional[str] = ""
+    approved_time: Optional[str] = None
+    blocked_notes: Optional[str] = "<none>"
+    blocked_time: Optional[str] = None
+    blocked_by: Optional[str] = ""
+    custom_text_1: Optional[str] = ""
+    custom_text_2: Optional[str] = ""
+    custom_text_3: Optional[str] = ""
+    custom_text_4: Optional[str] = ""
+    custom_text_5: Optional[str] = ""
+    custom_number_1: float = 0
+    custom_number_2: float = 0
+    custom_number_3: float = 0
+    custom_number_4: float = 0
+    custom_number_5: float = 0
+    custom_date_1: Optional[str] = None
+    custom_date_2: Optional[str] = None
+    custom_date_3: Optional[str] = None
+    custom_date_4: Optional[str] = None
+    custom_date_5: Optional[str] = None
+    notes: Optional[str] = ""
+    type_of_goods: Optional[str] = ""
+    supplying: int = 0
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class ERPSupplierUpdate(ERPSupplierCreate):
+    pass
+
+
+class ERPSupplierOut(BaseModel):
+    id: int
+    code: str
+    supplier_name: str
+    contact_name: str
+    phone_number: str
+    fax_number: str
+    email_address: str
+    web_page_address: str
+    address1: str
+    address2: str
+    city: str
+    state: str
+    country: str
+    zip: str
+    account_number: str
+    tax_number: str
+    currency_id: int
+    terms: str
+    withhold: bool
+    grn_approval: bool
+    advance_pay: bool
+    approved: bool
+    po_blocked: bool
+    pay_blocked: bool
+    garage: bool
+    approved_by: str
+    approved_time: Optional[datetime]
+    blocked_notes: str
+    blocked_time: Optional[datetime]
+    blocked_by: str
+    custom_text_1: str
+    custom_text_2: str
+    custom_text_3: str
+    custom_text_4: str
+    custom_text_5: str
+    custom_number_1: float
+    custom_number_2: float
+    custom_number_3: float
+    custom_number_4: float
+    custom_number_5: float
+    custom_date_1: Optional[datetime]
+    custom_date_2: Optional[datetime]
+    custom_date_3: Optional[datetime]
+    custom_date_4: Optional[datetime]
+    custom_date_5: Optional[datetime]
+    notes: str
+    type_of_goods: str
+    supplying: int
+    last_updated: datetime
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
+
+
+class ERPPurchaseOrderEntryCreate(BaseModel):
+    item_id: Optional[int] = None
+    item_lookup_code: Optional[str] = ""
+    item_description: Optional[str] = ""
+    quantity_ordered: float
+    price: Optional[float] = None
+    costed_price: Optional[float] = None
+    tax_rate: Optional[float] = None
+
+
+class ERPPurchaseOrderCreate(BaseModel):
+    po_title: str
+    po_type: int = 1
+    store_id: int = 1
+    p_status: int = 0
+    po_number: Optional[str] = ""
+    p_to: str
+    ship_to: str
+    requisioner: str
+    ship_via: str = ""
+    fob_point: str = ""
+    terms: str = ""
+    tax_rate: float = 0
+    shipping: float = 0
+    freight: str = ""
+    required_date: Optional[str] = None
+    confirming_to: str = ""
+    remarks: str = ""
+    supplier_id: int
+    currency_id: int = 1
+    exchange_rate: float = 1
+    user_id: int = 1
+    inventory_location: int = 1
+    is_placed: bool = False
+    date_placed: Optional[str] = None
+    batch_number: Optional[int] = None
+    pay_ref: Optional[int] = None
+    entries: List[ERPPurchaseOrderEntryCreate]
+
+
+class ERPPurchaseOrderEntryOut(BaseModel):
+    id: int
+    purchase_order_id: int
+    store_id: int
+    item_id: int
+    item_lookup_code: str
+    item_description: str
+    quantity_ordered: float
+    quantity_received: float
+    quantity_received_to_date: float
+    price: float
+    costed_price: float
+    tax_rate: float
+    order_number: str
+    last_updated: datetime
+
+
+class ERPPurchaseOrderOut(BaseModel):
+    id: int
+    purchase_order_id: int
+    po_number: str
+    po_title: str
+    po_type: int
+    store_id: int
+    p_status: int
+    status_label: str
+    date_created: datetime
+    required_date: Optional[datetime]
+    supplier_id: int
+    supplier_name: str
+    p_to: str
+    ship_to: str
+    requisioner: str
+    ship_via: str
+    fob_point: str
+    terms: str
+    tax_rate: float
+    shipping: float
+    freight: str
+    confirming_to: str
+    remarks: str
+    currency_id: int
+    exchange_rate: float
+    user_id: int
+    inventory_location: int
+    is_placed: bool
+    date_placed: Optional[datetime]
+    batch_number: int
+    pay_ref: int
+    po_is_cancelled: bool
+    picked: bool
+    items_count: int
+    total_amount: float
+    last_updated: datetime
+    entries: List[ERPPurchaseOrderEntryOut] = []
+
+
+def map_item_for_erp(doc: dict) -> ERPItemOut:
+    item_id = doc.get("ItemID", doc.get("ID", ""))
+    price = float(doc.get("Price", 0) or 0)
+    cost = float(doc.get("Cost", doc.get("LastCost", 0)) or 0)
+    sale_price = float(doc.get("SalePrice", doc.get("PriceA", price)) or 0)
+    reorder_level = float(doc.get("ReorderPoint", 0) or 0)
+    stock_available = get_item_stock_quantity(doc)
+    alias = str(doc.get("Alias", doc.get("alias", "")))
+    raw_category_id = doc.get("CategoryID", doc.get("DepartmentID", 0))
+    try:
+        category_id = int(raw_category_id or 0)
+    except (TypeError, ValueError):
+        category_id = 0
+    raw_category_name = normalize_category_name(doc.get("Category", ""))
+    display_category_name = "" if is_numeric_category_name(raw_category_name) else raw_category_name
+
+    return ERPItemOut(
+        id=str(item_id) if item_id is not None else "",
+        alias=alias,
+        lookup_code=str(doc.get("ItemLookupCode", "")),
+        description=str(doc.get("Description", "")),
+        price=price,
+        cost=cost,
+        sale_price=sale_price,
+        stock_available=stock_available,
+        category=display_category_name,
+        category_id=category_id,
+        bin_location=str(doc.get("BinLocation", "")),
+        stock=stock_available,
+        reorder_level=reorder_level,
+        markup_percent=float(doc.get("MarkupPercent", 0) or 0),
+        taxable=bool(doc.get("Taxable", False)),
+        consignment=bool(doc.get("Consignment", False))
+    )
+
+
+def normalize_category_name(value) -> str:
+    return str(value or "").strip()
+
+
+def is_numeric_category_name(value) -> bool:
+    normalized = normalize_category_name(value)
+    return bool(normalized) and normalized.isdigit()
+
+
+def coerce_category_identity(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_category_status(value) -> str:
+    normalized = str(value or "").strip().lower()
+    return "Inactive" if normalized in {"inactive", "draft", "disabled", "archived", "0", "false"} else "Active"
+
+
+def map_category_status_to_storage(status: str) -> str:
+    return "draft" if normalize_category_status(status) == "Inactive" else "published"
+
+
+def parse_category_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return datetime.utcnow()
+
+        try:
+            return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.utcnow()
+
+    return datetime.utcnow()
+
+
+def get_category_identity(doc: dict) -> int:
+    return int(doc.get("ID", doc.get("order", 0)) or 0)
+
+
+def get_category_parent_identity(doc: dict) -> int:
+    return int(doc.get("parent_id", doc.get("ParentID", 0)) or 0)
+
+
+def map_category_for_erp(doc: dict, item_count: int = 0, parent_name: str = "") -> ERPCategoryOut:
+    return ERPCategoryOut(
+        id=get_category_identity(doc),
+        code=str(doc.get("slug", doc.get("Code", "")) or ""),
+        name=normalize_category_name(doc.get("name", doc.get("Name", ""))),
+        parent=normalize_category_name(parent_name or doc.get("parent", doc.get("Parent", ""))),
+        items=int(item_count or 0),
+        status=normalize_category_status(doc.get("status", doc.get("Status", "Active"))),
+        last_updated=parse_category_datetime(
+            doc.get("updated_at") or doc.get("LastUpdated") or doc.get("created_at")
+        ),
+    )
+
+
+async def find_category_by_identity(category_id: int):
+    if int(category_id or 0) <= 0:
+        return None
+
+    return await categories_collection.find_one(
+        {
+            "$or": [
+                {"ID": int(category_id)},
+                {"order": int(category_id)},
+            ]
+        }
+    )
+
+
+def resolve_linked_category_name(category_doc: Optional[dict]) -> str:
+    if not category_doc:
+        return ""
+
+    resolved_name = normalize_category_name(category_doc.get("name", category_doc.get("Name", "")))
+    return resolved_name or ""
+
+
+def resolve_item_dashboard_category_name(
+    item_doc: dict,
+    categories_by_id: dict,
+    categories_by_name: dict,
+    uncategorized_label: str = "Uncategorized",
+) -> str:
+    category_doc = None
+    category_id = coerce_category_identity(item_doc.get("CategoryID", 0))
+    department_id = coerce_category_identity(item_doc.get("DepartmentID", 0))
+    category_value = normalize_category_name(item_doc.get("Category", ""))
+
+    if category_id > 0:
+        category_doc = categories_by_id.get(category_id)
+
+    if not category_doc and department_id > 0:
+        category_doc = categories_by_id.get(department_id)
+
+    if not category_doc and category_value:
+        if category_value.isdigit():
+            category_doc = categories_by_id.get(int(category_value))
+            resolved_name = resolve_linked_category_name(category_doc)
+            if resolved_name:
+                return resolved_name
+            return uncategorized_label
+        else:
+            category_doc = categories_by_name.get(category_value.casefold())
+            if not category_doc:
+                return category_value
+
+    resolved_name = resolve_linked_category_name(category_doc)
+    if resolved_name:
+        return resolved_name
+
+    if category_value and not is_numeric_category_name(category_value):
+        return category_value
+
+    return uncategorized_label
+
+
+async def resolve_item_category_selection(category_name: str = "", category_id: int = 0):
+    normalized_name = normalize_category_name(category_name)
+    resolved_id = int(category_id or 0)
+    resolved_doc = None
+
+    if resolved_id > 0:
+        resolved_doc = await find_category_by_identity(resolved_id)
+        if not resolved_doc:
+            raise HTTPException(status_code=400, detail="Selected category was not found")
+    elif normalized_name:
+        resolved_doc = await categories_collection.find_one(
+            {
+                "$or": [
+                    {
+                        "name": {
+                            "$regex": f"^{re.escape(normalized_name)}$",
+                            "$options": "i",
+                        }
+                    },
+                    {
+                        "Name": {
+                            "$regex": f"^{re.escape(normalized_name)}$",
+                            "$options": "i",
+                        }
+                    },
+                ]
+            }
+        )
+
+    if resolved_doc:
+        resolved_id = get_category_identity(resolved_doc)
+        normalized_name = normalize_category_name(
+            resolved_doc.get("name", resolved_doc.get("Name", normalized_name))
+        )
+
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Category is required")
+
+    return resolved_id, normalized_name
+
+
+def get_item_stock_quantity(doc: dict) -> int:
+    return int(doc.get("quantity", doc.get("Quantity", doc.get("StockAvailable", 0))) or 0)
+
+
+async def find_erp_item_by_lookup_or_id(lookup_code: str):
+    normalized = str(lookup_code or "").strip()
+    if not normalized:
+        return None
+
+    item = await item_collection.find_one({"ItemLookupCode": normalized})
+    if item:
+        return item
+
+    if normalized.isdigit():
+        numeric_value = int(normalized)
+
+        item = await item_collection.find_one({"ItemLookupCode": numeric_value})
+        if item:
+            return item
+
+        item = await item_collection.find_one({"ItemID": numeric_value})
+        if item:
+            return item
+
+    return None
+
+
+def parse_config_int(value, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if value is None:
+        return default
+
+    text = str(value).strip()
+    if not text:
+        return default
+
+    lowered = text.lower()
+    if lowered in {"true", "yes", "on"}:
+        return 1
+    if lowered in {"false", "no", "off"}:
+        return 0
+
+    try:
+        return int(float(text))
+    except ValueError:
+        return default
+
+
+def get_cashier_fingerprint_template(doc: dict) -> str:
+    for field_name in (
+        "FingerprintTemplate",
+        "FingerprintTemplateBase64",
+        "BiometricTemplate",
+        "FingerprintData",
+    ):
+        value = doc.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def get_cashier_fingerprint_format(doc: dict) -> str:
+    for field_name in (
+        "FingerprintTemplateFormat",
+        "BiometricTemplateFormat",
+        "FingerprintFormat",
+    ):
+        value = doc.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().upper()
+    return "STANDARDPRO"
+
+
+def get_cashier_fingerprint_updated_at(doc: dict) -> Optional[datetime]:
+    return parse_optional_erp_datetime(
+        doc.get("FingerprintUpdatedAt") or doc.get("BiometricUpdatedAt")
+    )
+
+
+async def get_configuration_value(field_name: str, default=0):
+    field_regex = {"$regex": f"^{re.escape(field_name)}$", "$options": "i"}
+    row = await configuration_collection.find_one({"FieldName": field_regex})
+    if row:
+        return row.get("FieldValue", default)
+
+    document = await configuration_collection.find_one(
+        {field_name: {"$exists": True}},
+        sort=[("ID", -1)],
+    )
+    if document:
+        return document.get(field_name, default)
+
+    return default
+
+
+async def get_biometrics_enabled() -> bool:
+    return parse_config_int(await get_configuration_value("Biometrics", 0), default=0) == 1
+
+
+async def get_fingerprint_match_threshold() -> int:
+    threshold = parse_config_int(
+        await get_configuration_value("FingerprintMatchThreshold", 100),
+        default=100,
+    )
+    return threshold if threshold > 0 else 100
+
+
+async def count_enrolled_fingerprint_users() -> int:
+    users = await cashier_collection.find({"Enabled": True}).to_list(1000)
+    return sum(1 for user in users if get_cashier_fingerprint_template(user))
+
+
+async def find_cashier_by_number(number: str):
+    normalized = str(number or "").strip()
+    if not normalized:
+        return None
+
+    return await cashier_collection.find_one(
+        {
+            "Number": {
+                "$regex": f"^{re.escape(normalized)}$",
+                "$options": "i",
+            }
+        }
+    )
+
+
+def map_cashier_for_erp(doc: dict) -> ERPUserOut:
+    enabled = bool(doc.get("Enabled", True))
+    fingerprint_template = get_cashier_fingerprint_template(doc)
+    return ERPUserOut(
+        id=int(doc.get("ID", 0) or 0),
+        number=str(doc.get("Number", "") or ""),
+        name=str(doc.get("Name", "") or ""),
+        user_role=str(doc.get("UserRole", "") or ""),
+        email_address=str(doc.get("EmailAddress", "") or ""),
+        telephone=str(doc.get("Telephone", "") or ""),
+        floor_limit=float(doc.get("FloorLimit", 0) or 0),
+        drop_limit=float(doc.get("DropLimit", 0) or 0),
+        enabled=enabled,
+        status="Active" if enabled else "Disabled",
+        store_id=int(doc.get("StoreID", 1) or 1),
+        last_updated=doc.get("LastUpdated") or datetime.utcnow(),
+        has_fingerprint=bool(fingerprint_template),
+        fingerprint_updated_at=get_cashier_fingerprint_updated_at(doc),
+    )
+
+
+def parse_erp_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.utcnow()
+    return datetime.utcnow()
+
+
+def parse_optional_erp_datetime(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def map_supplier_for_erp(doc: dict) -> ERPSupplierOut:
+    contact_block = doc.get("Contact") if isinstance(doc.get("Contact"), dict) else {}
+    address_block = doc.get("Address") if isinstance(doc.get("Address"), dict) else {}
+    account_block = doc.get("Account") if isinstance(doc.get("Account"), dict) else {}
+    flags_block = doc.get("Flags") if isinstance(doc.get("Flags"), dict) else {}
+    approval_block = doc.get("Approval") if isinstance(doc.get("Approval"), dict) else {}
+    blocking_block = doc.get("Blocking") if isinstance(doc.get("Blocking"), dict) else {}
+    custom_text_block = doc.get("CustomText") if isinstance(doc.get("CustomText"), dict) else {}
+    custom_number_block = doc.get("CustomNumber") if isinstance(doc.get("CustomNumber"), dict) else {}
+    custom_date_block = doc.get("CustomDate") if isinstance(doc.get("CustomDate"), dict) else {}
+    dates_block = doc.get("Dates") if isinstance(doc.get("Dates"), dict) else {}
+
+    return ERPSupplierOut(
+        id=int(doc.get("ID", 0) or 0),
+        code=str(doc.get("Code", doc.get("SupplierID", "")) or ""),
+        supplier_name=str(doc.get("SupplierName", doc.get("Company", "")) or ""),
+        contact_name=str(contact_block.get("ContactName", doc.get("Contact", "")) or ""),
+        phone_number=str(contact_block.get("PhoneNumber", doc.get("Phone", "")) or ""),
+        fax_number=str(contact_block.get("FaxNumber", "") or ""),
+        email_address=str(contact_block.get("EmailAddress", "") or ""),
+        web_page_address=str(contact_block.get("WebPageAddress", "") or ""),
+        address1=str(address_block.get("Address1", "") or ""),
+        address2=str(address_block.get("Address2", "") or ""),
+        city=str(address_block.get("City", "") or ""),
+        state=str(address_block.get("State", "") or ""),
+        country=str(address_block.get("Country", "") or ""),
+        zip=str(address_block.get("Zip", "") or ""),
+        account_number=str(account_block.get("AccountNumber", "") or ""),
+        tax_number=str(account_block.get("TaxNumber", "") or ""),
+        currency_id=int(account_block.get("CurrencyID", 0) or 0),
+        terms=str(account_block.get("Terms", doc.get("Terms", "")) or ""),
+        withhold=bool(flags_block.get("Withhold", False)),
+        grn_approval=bool(flags_block.get("GRNApproval", False)),
+        advance_pay=bool(flags_block.get("AdvancePay", False)),
+        approved=bool(flags_block.get("Approved", False)),
+        po_blocked=bool(flags_block.get("POBlocked", False)),
+        pay_blocked=bool(flags_block.get("PayBlocked", False)),
+        garage=bool(flags_block.get("Garage", False)),
+        approved_by=str(approval_block.get("ApprovedBy", "") or ""),
+        approved_time=parse_optional_erp_datetime(approval_block.get("ApprovedTime")),
+        blocked_notes=str(blocking_block.get("BlockedNotes", "") or ""),
+        blocked_time=parse_optional_erp_datetime(blocking_block.get("BlockedTime")),
+        blocked_by=str(blocking_block.get("BlockedBy", "") or ""),
+        custom_text_1=str(custom_text_block.get("1", "") or ""),
+        custom_text_2=str(custom_text_block.get("2", "") or ""),
+        custom_text_3=str(custom_text_block.get("3", "") or ""),
+        custom_text_4=str(custom_text_block.get("4", "") or ""),
+        custom_text_5=str(custom_text_block.get("5", "") or ""),
+        custom_number_1=float(custom_number_block.get("1", 0) or 0),
+        custom_number_2=float(custom_number_block.get("2", 0) or 0),
+        custom_number_3=float(custom_number_block.get("3", 0) or 0),
+        custom_number_4=float(custom_number_block.get("4", 0) or 0),
+        custom_number_5=float(custom_number_block.get("5", 0) or 0),
+        custom_date_1=parse_optional_erp_datetime(custom_date_block.get("1")),
+        custom_date_2=parse_optional_erp_datetime(custom_date_block.get("2")),
+        custom_date_3=parse_optional_erp_datetime(custom_date_block.get("3")),
+        custom_date_4=parse_optional_erp_datetime(custom_date_block.get("4")),
+        custom_date_5=parse_optional_erp_datetime(custom_date_block.get("5")),
+        notes=str(doc.get("Notes", "") or ""),
+        type_of_goods=str(doc.get("TypeofGoods", "") or ""),
+        supplying=int(doc.get("Supplying", 0) or 0),
+        last_updated=parse_erp_datetime(dates_block.get("LastUpdated") or doc.get("LastUpdated")),
+        start_date=parse_optional_erp_datetime(dates_block.get("sDate")),
+        end_date=parse_optional_erp_datetime(dates_block.get("eDate")),
+    )
+
+
+def build_supplier_doc(supplier_id: int, payload: ERPSupplierCreate, code: str) -> dict:
+    return {
+        "ID": supplier_id,
+        "SupplierName": payload.supplier_name.strip(),
+        "Code": code,
+        "Contact": {
+            "ContactName": payload.contact_name.strip() if payload.contact_name else "",
+            "PhoneNumber": payload.phone_number.strip() if payload.phone_number else "",
+            "FaxNumber": payload.fax_number.strip() if payload.fax_number else "",
+            "EmailAddress": payload.email_address.strip() if payload.email_address else "",
+            "WebPageAddress": payload.web_page_address.strip() if payload.web_page_address else "",
+        },
+        "Address": {
+            "Address1": payload.address1.strip() if payload.address1 else "",
+            "Address2": payload.address2.strip() if payload.address2 else "",
+            "City": payload.city.strip() if payload.city else "",
+            "State": payload.state.strip() if payload.state else "",
+            "Country": payload.country.strip() if payload.country else "",
+            "Zip": payload.zip.strip() if payload.zip else "",
+        },
+        "Account": {
+            "AccountNumber": payload.account_number.strip() if payload.account_number else "",
+            "TaxNumber": payload.tax_number.strip() if payload.tax_number else "",
+            "CurrencyID": int(payload.currency_id or 0),
+            "Terms": payload.terms.strip() if payload.terms else "",
+        },
+        "Flags": {
+            "Withhold": bool(payload.withhold),
+            "GRNApproval": bool(payload.grn_approval),
+            "AdvancePay": bool(payload.advance_pay),
+            "Approved": bool(payload.approved),
+            "POBlocked": bool(payload.po_blocked),
+            "PayBlocked": bool(payload.pay_blocked),
+            "Garage": bool(payload.garage),
+        },
+        "Approval": {
+            "ApprovedBy": payload.approved_by.strip() if payload.approved_by else "",
+            "ApprovedTime": parse_optional_erp_datetime(payload.approved_time),
+        },
+        "Blocking": {
+            "BlockedNotes": payload.blocked_notes.strip() if payload.blocked_notes else "<none>",
+            "BlockedTime": parse_optional_erp_datetime(payload.blocked_time),
+            "BlockedBy": payload.blocked_by.strip() if payload.blocked_by else "",
+        },
+        "CustomText": {
+            "1": payload.custom_text_1.strip() if payload.custom_text_1 else "",
+            "2": payload.custom_text_2.strip() if payload.custom_text_2 else "",
+            "3": payload.custom_text_3.strip() if payload.custom_text_3 else "",
+            "4": payload.custom_text_4.strip() if payload.custom_text_4 else "",
+            "5": payload.custom_text_5.strip() if payload.custom_text_5 else "",
+        },
+        "CustomNumber": {
+            "1": float(payload.custom_number_1 or 0),
+            "2": float(payload.custom_number_2 or 0),
+            "3": float(payload.custom_number_3 or 0),
+            "4": float(payload.custom_number_4 or 0),
+            "5": float(payload.custom_number_5 or 0),
+        },
+        "CustomDate": {
+            "1": parse_optional_erp_datetime(payload.custom_date_1),
+            "2": parse_optional_erp_datetime(payload.custom_date_2),
+            "3": parse_optional_erp_datetime(payload.custom_date_3),
+            "4": parse_optional_erp_datetime(payload.custom_date_4),
+            "5": parse_optional_erp_datetime(payload.custom_date_5),
+        },
+        "Notes": payload.notes.strip() if payload.notes else "",
+        "TypeofGoods": payload.type_of_goods.strip() if payload.type_of_goods else "",
+        "Supplying": int(payload.supplying or 0),
+        "Dates": {
+            "LastUpdated": datetime.utcnow(),
+            "sDate": parse_optional_erp_datetime(payload.start_date),
+            "eDate": parse_optional_erp_datetime(payload.end_date),
+        },
+    }
+
+
+def get_purchase_order_status_label(doc: dict) -> str:
+    if bool(doc.get("POisCancelled", False)):
+        return "Cancelled"
+
+    status_value = int(doc.get("PStatus", 0) or 0)
+    if status_value == 3:
+        return "Closed"
+    if status_value == 2:
+        return "Part Received"
+    if status_value == 1:
+        return "Submitted"
+    if bool(doc.get("IsPlaced", False)):
+        return "Placed"
+    return "Draft"
+
+
+def map_purchase_order_entry_for_erp(doc: dict) -> ERPPurchaseOrderEntryOut:
+    return ERPPurchaseOrderEntryOut(
+        id=int(doc.get("ID", 0) or 0),
+        purchase_order_id=int(doc.get("PurchaseOrderID", 0) or 0),
+        store_id=int(doc.get("StoreID", 1) or 1),
+        item_id=int(doc.get("ItemID", 0) or 0),
+        item_lookup_code=str(doc.get("ItemLookupCode", "") or ""),
+        item_description=str(doc.get("ItemDescription", "") or ""),
+        quantity_ordered=float(doc.get("QuantityOrdered", 0) or 0),
+        quantity_received=float(doc.get("QuantityReceived", 0) or 0),
+        quantity_received_to_date=float(doc.get("QuantityReceivedToDate", 0) or 0),
+        price=float(doc.get("Price", 0) or 0),
+        costed_price=float(doc.get("CostedPrice", doc.get("Price", 0)) or 0),
+        tax_rate=float(doc.get("TaxRate", 0) or 0),
+        order_number=str(doc.get("OrderNumber", "") or ""),
+        last_updated=parse_erp_datetime(doc.get("LastUpdated")),
+    )
+
+
+def map_purchase_order_for_erp(
+    doc: dict,
+    entries: List[dict],
+    supplier_name: str = "",
+) -> ERPPurchaseOrderOut:
+    mapped_entries = [map_purchase_order_entry_for_erp(entry) for entry in entries]
+    subtotal = sum(float(entry.costed_price) * float(entry.quantity_ordered) for entry in mapped_entries)
+    shipping = float(doc.get("Shipping", 0) or 0)
+
+    return ERPPurchaseOrderOut(
+        id=int(doc.get("ID", 0) or 0),
+        purchase_order_id=int(doc.get("WorkSheetID", doc.get("ID", 0)) or 0),
+        po_number=str(doc.get("PONumber", "") or ""),
+        po_title=str(doc.get("POTitle", "") or ""),
+        po_type=int(doc.get("POType", 1) or 1),
+        store_id=int(doc.get("StoreID", 1) or 1),
+        p_status=int(doc.get("PStatus", 0) or 0),
+        status_label=get_purchase_order_status_label(doc),
+        date_created=parse_erp_datetime(doc.get("DateCreated")),
+        required_date=parse_optional_erp_datetime(doc.get("RequiredDate")),
+        supplier_id=int(doc.get("SupplierID", 0) or 0),
+        supplier_name=supplier_name,
+        p_to=str(doc.get("PTo", "") or ""),
+        ship_to=str(doc.get("ShipTo", "") or ""),
+        requisioner=str(doc.get("Requisioner", "") or ""),
+        ship_via=str(doc.get("ShipVia", "") or ""),
+        fob_point=str(doc.get("FOBPoint", "") or ""),
+        terms=str(doc.get("Terms", "") or ""),
+        tax_rate=float(doc.get("TaxRate", 0) or 0),
+        shipping=shipping,
+        freight=str(doc.get("Freight", "") or ""),
+        confirming_to=str(doc.get("ConfirmingTo", "") or ""),
+        remarks=str(doc.get("Remarks", "") or ""),
+        currency_id=int(doc.get("CurrencyID", 1) or 1),
+        exchange_rate=float(doc.get("ExchangeRate", 1) or 1),
+        user_id=int(doc.get("UserID", 1) or 1),
+        inventory_location=int(doc.get("InventoryLocation", 1) or 1),
+        is_placed=bool(doc.get("IsPlaced", False)),
+        date_placed=parse_optional_erp_datetime(doc.get("DatePlaced")),
+        batch_number=int(doc.get("BatchNumber", 0) or 0),
+        pay_ref=int(doc.get("PayRef", 0) or 0),
+        po_is_cancelled=bool(doc.get("POisCancelled", False)),
+        picked=bool(doc.get("Picked", False)),
+        items_count=len(mapped_entries),
+        total_amount=subtotal + shipping,
+        last_updated=parse_erp_datetime(doc.get("LastUpdated")),
+        entries=mapped_entries,
+    )
+
+
+async def build_purchase_order_entries_lookup(purchase_order_ids: List[int]) -> dict:
+    ids = sorted({int(value) for value in purchase_order_ids if int(value or 0) > 0})
+    if not ids:
+        return {}
+
+    entries = await purchase_order_entries_collection.find(
+        {"PurchaseOrderID": {"$in": ids}}
+    ).sort("ID", 1).to_list(10000)
+
+    grouped_entries = {}
+    for entry in entries:
+        purchase_order_id = int(entry.get("PurchaseOrderID", 0) or 0)
+        grouped_entries.setdefault(purchase_order_id, []).append(entry)
+    return grouped_entries
+
+
+async def build_supplier_name_lookup(supplier_ids: List[int]) -> dict:
+    ids = sorted({int(value) for value in supplier_ids if int(value or 0) > 0})
+    if not ids:
+        return {}
+
+    suppliers = await supplier_collection.find({"ID": {"$in": ids}}).to_list(len(ids))
+    return {
+        int(supplier.get("ID", 0) or 0): str(
+            supplier.get("SupplierName", supplier.get("Company", "")) or ""
+        )
+        for supplier in suppliers
+    }
+
+# =====================
+# CORS
+# =====================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def allow_private_network_requests(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+    else:
+        response = await call_next(request)
+
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+
+    return response
+
+# =====================
+# ROUTES
+# =====================
+@app.get("/")
+async def read_root():
+    return {"status": "POS Backend is running"}
+
+@app.get("/item/{code}")
+async def get_item(code: str):
+    """Fetch item details from DB."""
+    item = await item_collection.find_one(
+        {
+            "$or": [
+                {"ItemLookupCode": code},
+                {"Alias": code},
+                {"alias": code},
+            ]
+        }
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    stock_available = get_item_stock_quantity(item)
+    return {
+        "code": item.get("ItemLookupCode", ""),
+        "description": item.get("Description", ""),
+        "price": float(item.get("Price", 0)),
+        "taxable": item.get("Taxable", False),
+        "quantity": stock_available,
+        "stock_available": stock_available,
+        "stock": stock_available,
+    }
+
+
+@app.get("/erp/items", response_model=List[ERPItemOut])
+async def list_erp_items(search: Optional[str] = Query(default=None), limit: int = Query(default=300, ge=1, le=2000)):
+    query = {}
+    if search:
+        query = {
+            "$or": [
+                {"ItemLookupCode": {"$regex": search, "$options": "i"}},
+                {"Description": {"$regex": search, "$options": "i"}},
+                {"Alias": {"$regex": search, "$options": "i"}},
+                {"alias": {"$regex": search, "$options": "i"}},
+                {"BinLocation": {"$regex": search, "$options": "i"}},
+            ]
+        }
+
+    items = await item_collection.find(query).sort("Description", 1).to_list(limit)
+    return [map_item_for_erp(item) for item in items]
+
+
+@app.get("/erp/items/by-lookup/{lookup_code}", response_model=ERPItemOut)
+async def get_erp_item_by_lookup(lookup_code: str):
+    item = await find_erp_item_by_lookup_or_id(lookup_code)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return map_item_for_erp(item)
+
+
+@app.get("/erp/categories", response_model=List[ERPCategoryOut])
+async def list_erp_categories(search: Optional[str] = Query(default="")):
+    category_docs = await categories_collection.find({}).to_list(length=500)
+    merged_categories = {}
+    category_name_by_identity = {}
+    categories_by_id = {}
+    categories_by_name = {}
+
+    for doc in category_docs:
+        name = normalize_category_name(doc.get("name", doc.get("Name", "")))
+        if not name:
+            continue
+        identity = get_category_identity(doc)
+        if identity <= 0 or is_numeric_category_name(name):
+            continue
+        if identity > 0:
+            category_name_by_identity[identity] = name
+            categories_by_id[identity] = doc
+        categories_by_name[name.casefold()] = doc
+
+    item_counts = {}
+    async for item_doc in item_collection.find(
+        {},
+        {
+            "_id": 0,
+            "Category": 1,
+            "CategoryID": 1,
+            "DepartmentID": 1,
+        },
+    ):
+        resolved_name = resolve_item_dashboard_category_name(
+            item_doc,
+            categories_by_id=categories_by_id,
+            categories_by_name=categories_by_name,
+            uncategorized_label="",
+        )
+        if not resolved_name:
+            continue
+        item_counts[resolved_name] = int(item_counts.get(resolved_name, 0) or 0) + 1
+
+    for doc in category_docs:
+        name = normalize_category_name(doc.get("name", doc.get("Name", "")))
+        if not name:
+            continue
+        identity = get_category_identity(doc)
+        if identity <= 0 or is_numeric_category_name(name):
+            continue
+        key = name.casefold()
+        raw_parent_id = doc.get("parent_id", 0)
+        try:
+            parent_id = int(raw_parent_id or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+        parent_name = category_name_by_identity.get(parent_id, "")
+        merged_categories[key] = map_category_for_erp(
+            doc,
+            item_count=item_counts.get(name, 0),
+            parent_name=parent_name,
+        )
+
+    categories = list(merged_categories.values())
+    search_value = str(search or "").strip().lower()
+    if search_value:
+        categories = [
+            category
+            for category in categories
+            if search_value in category.name.lower()
+            or search_value in category.code.lower()
+            or search_value in category.parent.lower()
+            or search_value in category.status.lower()
+        ]
+
+    return sorted(categories, key=lambda category: (category.name or "").lower())
+
+
+@app.post("/erp/categories", response_model=ERPCategoryOut, status_code=201)
+async def create_erp_category(payload: ERPCategoryCreate):
+    name = normalize_category_name(payload.name)
+    requested_parent_id = int(payload.parent_id or 0)
+    parent = normalize_category_name(payload.parent)
+    status = normalize_category_status(payload.status)
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name is required")
+
+    existing = await categories_collection.find_one(
+        {
+            "$or": [
+                {
+                    "name": {
+                        "$regex": f"^{re.escape(name)}$",
+                        "$options": "i",
+                    }
+                },
+                {
+                    "Name": {
+                        "$regex": f"^{re.escape(name)}$",
+                        "$options": "i",
+                    }
+                },
+            ]
+        }
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Category already exists")
+
+    parent_doc = None
+    parent_name = ""
+    if requested_parent_id > 0:
+        parent_doc = await find_category_by_identity(requested_parent_id)
+        if not parent_doc:
+            raise HTTPException(status_code=400, detail="Selected parent category was not found")
+        parent_name = normalize_category_name(parent_doc.get("name", parent_doc.get("Name", "")))
+    elif parent:
+        parent_doc = await categories_collection.find_one(
+            {
+                "$or": [
+                    {
+                        "name": {
+                            "$regex": f"^{re.escape(parent)}$",
+                            "$options": "i",
+                        }
+                    },
+                    {
+                        "Name": {
+                            "$regex": f"^{re.escape(parent)}$",
+                            "$options": "i",
+                        }
+                    },
+                ]
+            }
+        )
+        if not parent_doc:
+            raise HTTPException(status_code=400, detail="Selected parent category was not found")
+        parent_name = normalize_category_name(parent_doc.get("name", parent_doc.get("Name", "")))
+
+    last_category = await categories_collection.find_one({}, sort=[("order", -1), ("ID", -1)])
+    next_id = get_category_identity(last_category or {}) + 1
+    now = datetime.utcnow()
+
+    category_doc = {
+        "name": name,
+        "description": "",
+        "icon": "",
+        "author_id": 1,
+        "author_type": "",
+        "is_default": False,
+        "is_featured": False,
+        "order": next_id,
+        "parent_id": get_category_identity(parent_doc or {}),
+        "status": map_category_status_to_storage(status),
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+
+    await categories_collection.insert_one(category_doc)
+    return map_category_for_erp(category_doc, item_count=0, parent_name=parent_name)
+
+
+@app.put("/erp/categories/{category_id}", response_model=ERPCategoryOut)
+async def update_erp_category(category_id: int, payload: ERPCategoryCreate):
+    existing_category = await find_category_by_identity(category_id)
+    if not existing_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    name = normalize_category_name(payload.name)
+    requested_parent_id = int(payload.parent_id or 0)
+    parent = normalize_category_name(payload.parent)
+    status = normalize_category_status(payload.status)
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name is required")
+
+    duplicate_category = await categories_collection.find_one(
+        {
+            "$and": [
+                {
+                    "$or": [
+                        {
+                            "name": {
+                                "$regex": f"^{re.escape(name)}$",
+                                "$options": "i",
+                            }
+                        },
+                        {
+                            "Name": {
+                                "$regex": f"^{re.escape(name)}$",
+                                "$options": "i",
+                            }
+                        },
+                    ]
+                },
+                {
+                    "$nor": [
+                        {"ID": int(category_id)},
+                        {"order": int(category_id)},
+                    ]
+                },
+            ]
+        }
+    )
+    if duplicate_category:
+        raise HTTPException(status_code=409, detail="Category already exists")
+
+    parent_doc = None
+    parent_name = ""
+    existing_identity = get_category_identity(existing_category)
+    if requested_parent_id > 0:
+        if requested_parent_id == existing_identity:
+            raise HTTPException(status_code=400, detail="A category cannot be its own parent")
+        parent_doc = await find_category_by_identity(requested_parent_id)
+        if not parent_doc:
+            raise HTTPException(status_code=400, detail="Selected parent category was not found")
+        parent_name = normalize_category_name(parent_doc.get("name", parent_doc.get("Name", "")))
+    elif parent:
+        parent_doc = await categories_collection.find_one(
+            {
+                "$or": [
+                    {
+                        "name": {
+                            "$regex": f"^{re.escape(parent)}$",
+                            "$options": "i",
+                        }
+                    },
+                    {
+                        "Name": {
+                            "$regex": f"^{re.escape(parent)}$",
+                            "$options": "i",
+                        }
+                    },
+                ]
+            }
+        )
+        if not parent_doc:
+            raise HTTPException(status_code=400, detail="Selected parent category was not found")
+        if get_category_identity(parent_doc) == existing_identity:
+            raise HTTPException(status_code=400, detail="A category cannot be its own parent")
+        parent_name = normalize_category_name(parent_doc.get("name", parent_doc.get("Name", "")))
+
+    update_doc = {
+        "name": name,
+        "status": map_category_status_to_storage(status),
+        "parent_id": get_category_identity(parent_doc or {}),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+    await categories_collection.update_one(
+        {
+            "$or": [
+                {"ID": existing_identity},
+                {"order": existing_identity},
+            ]
+        },
+        {"$set": update_doc},
+    )
+
+    updated_category = {**existing_category, **update_doc}
+    return map_category_for_erp(updated_category, item_count=0, parent_name=parent_name)
+
+
+@app.post("/erp/items", response_model=ERPItemOut, status_code=201)
+async def create_erp_item(payload: ERPItemCreate):
+    code = payload.code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Item code is required")
+    alias = payload.alias.strip()
+    if not alias:
+        raise HTTPException(status_code=400, detail="Alias (barcode) is required")
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+    resolved_category_id, resolved_category_name = await resolve_item_category_selection(
+        payload.category,
+        payload.category_id,
+    )
+
+    if payload.price < 0 or payload.cost < 0 or payload.stock < 0 or payload.reorder_level < 0:
+        raise HTTPException(status_code=400, detail="Price, cost, stock, and reorder level must be non-negative")
+
+    computed_sale_price = (
+        float(payload.sale_price)
+        if payload.sale_price is not None
+        else float(payload.cost) * (1 + (float(payload.markup_percent) / 100))
+    )
+    if computed_sale_price == 0:
+        computed_sale_price = float(payload.price)
+    if computed_sale_price < payload.cost:
+        raise HTTPException(status_code=400, detail="Sale price cannot be below cost")
+
+    existing = await item_collection.find_one({"ItemLookupCode": code})
+    if existing:
+        raise HTTPException(status_code=409, detail="Item code already exists")
+    existing_alias = await item_collection.find_one({"$or": [{"Alias": alias}, {"alias": alias}]})
+    if existing_alias:
+        raise HTTPException(status_code=409, detail="Alias (barcode) already exists")
+
+    last_item = await item_collection.find_one(
+        {"ItemID": {"$type": "number"}},
+        sort=[("ItemID", -1)]
+    )
+    next_item_id = int(last_item.get("ItemID", 0)) + 1 if last_item else 1
+
+    item_doc = {
+        "ItemID": next_item_id,
+        "ItemLookupCode": code,
+        "Alias": alias,
+        "alias": alias,
+        "Barcode": alias,
+        "Description": description,
+        "Category": resolved_category_name,
+        "CategoryID": resolved_category_id,
+        "DepartmentID": 0,
+        "BinLocation": payload.bin_location.strip(),
+        "Price": float(payload.price),
+        "Cost": float(payload.cost),
+        "SalePrice": computed_sale_price,
+        "MarkupPercent": float(payload.markup_percent),
+        "quantity": int(payload.stock),
+        "ReorderPoint": float(payload.reorder_level),
+        "Taxable": bool(payload.taxable),
+        "Consignment": bool(payload.consignment),
+        "DateCreated": datetime.utcnow(),
+        "LastUpdated": datetime.utcnow(),
+        "Inactive": False,
+        "StoreID": 1,
+    }
+    await item_collection.insert_one(item_doc)
+    return map_item_for_erp(item_doc)
+
+
+@app.put("/erp/items/{lookup_code}", response_model=ERPItemOut)
+async def update_erp_item(lookup_code: str, payload: ERPItemUpdate):
+    code = payload.code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Item code is required")
+    alias = payload.alias.strip()
+    if not alias:
+        raise HTTPException(status_code=400, detail="Alias (barcode) is required")
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+    resolved_category_id, resolved_category_name = await resolve_item_category_selection(
+        payload.category,
+        payload.category_id,
+    )
+
+    if payload.price < 0 or payload.cost < 0 or payload.stock < 0 or payload.reorder_level < 0:
+        raise HTTPException(status_code=400, detail="Price, cost, stock, and reorder level must be non-negative")
+
+    computed_sale_price = (
+        float(payload.sale_price)
+        if payload.sale_price is not None
+        else float(payload.cost) * (1 + (float(payload.markup_percent) / 100))
+    )
+    if computed_sale_price == 0:
+        computed_sale_price = float(payload.price)
+    if computed_sale_price < payload.cost:
+        raise HTTPException(status_code=400, detail="Sale price cannot be below cost")
+
+    existing = await find_erp_item_by_lookup_or_id(lookup_code)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    code_owner = await item_collection.find_one(
+        {"ItemLookupCode": code, "_id": {"$ne": existing["_id"]}}
+    )
+    if code_owner:
+        raise HTTPException(status_code=409, detail="Item code already exists")
+
+    alias_owner = await item_collection.find_one(
+        {
+            "$or": [{"Alias": alias}, {"alias": alias}],
+            "_id": {"$ne": existing["_id"]},
+        }
+    )
+    if alias_owner:
+        raise HTTPException(status_code=409, detail="Alias (barcode) already exists")
+
+    update_fields = {
+        "ItemLookupCode": code,
+        "Alias": alias,
+        "alias": alias,
+        "Barcode": alias,
+        "Description": description,
+        "Category": resolved_category_name,
+        "CategoryID": resolved_category_id,
+        "BinLocation": payload.bin_location.strip(),
+        "Price": float(payload.price),
+        "Cost": float(payload.cost),
+        "SalePrice": computed_sale_price,
+        "MarkupPercent": float(payload.markup_percent),
+        "quantity": int(payload.stock),
+        "ReorderPoint": float(payload.reorder_level),
+        "Taxable": bool(payload.taxable),
+        "Consignment": bool(payload.consignment),
+        "LastUpdated": datetime.utcnow(),
+    }
+
+    await item_collection.update_one(
+        {"_id": existing["_id"]},
+        {"$set": update_fields}
+    )
+    updated = await item_collection.find_one({"_id": existing["_id"]})
+    return map_item_for_erp(updated)
+
+
+@app.patch("/erp/items/{lookup_code}/reorder-level", response_model=ERPItemOut)
+async def update_erp_item_reorder_level(lookup_code: str, payload: ERPItemReorderLevelUpdate):
+    if payload.reorder_level < 0:
+        raise HTTPException(status_code=400, detail="Reorder level must be non-negative")
+
+    existing = await find_erp_item_by_lookup_or_id(lookup_code)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    await item_collection.update_one(
+        {"_id": existing["_id"]},
+        {
+            "$set": {
+                "ReorderPoint": float(payload.reorder_level),
+                "LastUpdated": datetime.utcnow(),
+            }
+        },
+    )
+    updated = await item_collection.find_one({"_id": existing["_id"]})
+    return map_item_for_erp(updated)
+
+
+@app.delete("/erp/items/{lookup_code}")
+async def delete_erp_item(lookup_code: str):
+    existing = await find_erp_item_by_lookup_or_id(lookup_code)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    result = await item_collection.delete_one({"_id": existing["_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Item removed successfully", "lookup_code": lookup_code}
+
+
+# Supplier endpoints read and write the live `supplier` collection schema.
+@app.get("/erp/suppliers", response_model=List[ERPSupplierOut])
+async def list_erp_suppliers(
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=2000),
+):
+    query = {}
+    if search:
+        query = {
+            "$or": [
+                {"Code": {"$regex": search, "$options": "i"}},
+                {"SupplierID": {"$regex": search, "$options": "i"}},
+                {"SupplierName": {"$regex": search, "$options": "i"}},
+                {"Company": {"$regex": search, "$options": "i"}},
+                {"Contact.ContactName": {"$regex": search, "$options": "i"}},
+                {"Contact.PhoneNumber": {"$regex": search, "$options": "i"}},
+                {"Contact.EmailAddress": {"$regex": search, "$options": "i"}},
+                {"Contact.WebPageAddress": {"$regex": search, "$options": "i"}},
+                {"Address.Address1": {"$regex": search, "$options": "i"}},
+                {"Address.City": {"$regex": search, "$options": "i"}},
+                {"Address.Country": {"$regex": search, "$options": "i"}},
+                {"Account.AccountNumber": {"$regex": search, "$options": "i"}},
+                {"Account.TaxNumber": {"$regex": search, "$options": "i"}},
+                {"Account.Terms": {"$regex": search, "$options": "i"}},
+                {"Notes": {"$regex": search, "$options": "i"}},
+                {"TypeofGoods": {"$regex": search, "$options": "i"}},
+            ]
+        }
+
+    suppliers = await supplier_collection.find(query).sort("SupplierName", 1).to_list(limit)
+    return [map_supplier_for_erp(supplier) for supplier in suppliers]
+
+
+@app.post("/erp/suppliers", response_model=ERPSupplierOut, status_code=201)
+async def create_erp_supplier(payload: ERPSupplierCreate):
+    supplier_name = payload.supplier_name.strip()
+    code = payload.code.strip() if payload.code else ""
+
+    if not supplier_name:
+        raise HTTPException(status_code=400, detail="Supplier name is required")
+
+    last_supplier = await supplier_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)]
+    )
+    next_id = int(last_supplier.get("ID", 0)) + 1 if last_supplier else 1
+
+    if not code:
+        code = f"SUP{next_id:03d}"
+
+    existing_supplier = await supplier_collection.find_one(
+        {
+            "$or": [
+                {"Code": code},
+                {"SupplierID": code},
+            ]
+        }
+    )
+    if existing_supplier:
+        raise HTTPException(status_code=409, detail="Supplier code already exists")
+
+    supplier_doc = build_supplier_doc(next_id, payload, code)
+
+    await supplier_collection.insert_one(supplier_doc)
+    return map_supplier_for_erp(supplier_doc)
+
+
+@app.put("/erp/suppliers/{supplier_id}", response_model=ERPSupplierOut)
+async def update_erp_supplier(supplier_id: int, payload: ERPSupplierUpdate):
+    existing = await supplier_collection.find_one({"ID": int(supplier_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    supplier_name = payload.supplier_name.strip()
+    if not supplier_name:
+        raise HTTPException(status_code=400, detail="Supplier name is required")
+
+    current_code = str(existing.get("Code", existing.get("SupplierID", "")) or "").strip()
+    code = payload.code.strip() if payload.code else current_code
+    if not code:
+        code = f"SUP{int(supplier_id):03d}"
+
+    code_owner = await supplier_collection.find_one(
+        {
+            "$or": [
+                {"Code": code},
+                {"SupplierID": code},
+            ],
+            "ID": {"$ne": int(supplier_id)},
+        }
+    )
+    if code_owner:
+        raise HTTPException(status_code=409, detail="Supplier code already exists")
+
+    supplier_doc = build_supplier_doc(int(supplier_id), payload, code)
+    await supplier_collection.update_one({"_id": existing["_id"]}, {"$set": supplier_doc})
+    updated = await supplier_collection.find_one({"_id": existing["_id"]})
+    return map_supplier_for_erp(updated)
+
+
+@app.get("/erp/purchase-orders", response_model=List[ERPPurchaseOrderOut])
+async def list_erp_purchase_orders(
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=2000),
+):
+    query = {}
+    if search:
+        supplier_matches = await supplier_collection.find(
+            {
+                "$or": [
+                    {"SupplierName": {"$regex": search, "$options": "i"}},
+                    {"Company": {"$regex": search, "$options": "i"}},
+                    {"Code": {"$regex": search, "$options": "i"}},
+                    {"SupplierID": {"$regex": search, "$options": "i"}},
+                ]
+            }
+        ).to_list(200)
+        matching_supplier_ids = [
+            int(supplier.get("ID", 0) or 0)
+            for supplier in supplier_matches
+            if int(supplier.get("ID", 0) or 0) > 0
+        ]
+        query = {
+            "$or": [
+                {"PONumber": {"$regex": search, "$options": "i"}},
+                {"POTitle": {"$regex": search, "$options": "i"}},
+                {"PTo": {"$regex": search, "$options": "i"}},
+                {"ShipTo": {"$regex": search, "$options": "i"}},
+                {"Requisioner": {"$regex": search, "$options": "i"}},
+                {"Remarks": {"$regex": search, "$options": "i"}},
+                {"ConfirmingTo": {"$regex": search, "$options": "i"}},
+                {"SupplierID": {"$in": matching_supplier_ids}},
+            ]
+        }
+
+    purchase_orders = await purchase_order_collection.find(query).sort("DateCreated", -1).to_list(limit)
+    if not purchase_orders:
+        return []
+
+    purchase_order_ids = [
+        int(doc.get("WorkSheetID", doc.get("ID", 0)) or 0)
+        for doc in purchase_orders
+    ]
+    supplier_ids = [int(doc.get("SupplierID", 0) or 0) for doc in purchase_orders]
+    entries_lookup = await build_purchase_order_entries_lookup(purchase_order_ids)
+    supplier_lookup = await build_supplier_name_lookup(supplier_ids)
+
+    return [
+        map_purchase_order_for_erp(
+            doc,
+            entries_lookup.get(int(doc.get("WorkSheetID", doc.get("ID", 0)) or 0), []),
+            supplier_lookup.get(int(doc.get("SupplierID", 0) or 0), ""),
+        )
+        for doc in purchase_orders
+    ]
+
+
+@app.post("/erp/purchase-orders", response_model=ERPPurchaseOrderOut, status_code=201)
+async def create_erp_purchase_order(payload: ERPPurchaseOrderCreate):
+    po_title = payload.po_title.strip()
+    p_to = payload.p_to.strip()
+    ship_to = payload.ship_to.strip()
+    requisioner = payload.requisioner.strip()
+
+    if not po_title:
+        raise HTTPException(status_code=400, detail="PO title is required")
+    if not p_to:
+        raise HTTPException(status_code=400, detail="Purchase order destination is required")
+    if not ship_to:
+        raise HTTPException(status_code=400, detail="Ship to location is required")
+    if not requisioner:
+        raise HTTPException(status_code=400, detail="Requisioner is required")
+    if int(payload.supplier_id or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Supplier is required")
+    if not payload.entries:
+        raise HTTPException(status_code=400, detail="Add at least one item to the purchase order")
+    if float(payload.shipping or 0) < 0:
+        raise HTTPException(status_code=400, detail="Shipping cannot be negative")
+    if float(payload.exchange_rate or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Exchange rate must be greater than zero")
+
+    supplier = await supplier_collection.find_one({"ID": int(payload.supplier_id)})
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    last_purchase_order = await purchase_order_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)],
+    )
+    next_po_id = int(last_purchase_order.get("ID", 0)) + 1 if last_purchase_order else 1
+
+    last_purchase_order_link = await purchase_order_collection.find_one(
+        {"WorkSheetID": {"$type": "number"}},
+        sort=[("WorkSheetID", -1)],
+    )
+    next_purchase_order_id = (
+        int(last_purchase_order_link.get("WorkSheetID", 1000)) + 1
+        if last_purchase_order_link
+        else 1001
+    )
+
+    po_number = payload.po_number.strip() if payload.po_number else ""
+    if not po_number:
+        po_number = f"PO-{next_po_id:04d}"
+
+    existing_number = await purchase_order_collection.find_one({"PONumber": po_number})
+    if existing_number:
+        raise HTTPException(status_code=409, detail="Purchase order number already exists")
+
+    last_entry = await purchase_order_entries_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)],
+    )
+    next_entry_id = int(last_entry.get("ID", 0)) + 1 if last_entry else 1
+
+    now = datetime.utcnow()
+    entry_docs = []
+    for entry in payload.entries:
+        item_lookup_code_input = str(entry.item_lookup_code or "").strip()
+        item_id_value = int(entry.item_id or 0) if entry.item_id is not None else 0
+
+        if item_id_value <= 0 and not item_lookup_code_input:
+            raise HTTPException(status_code=400, detail="Every purchase order line must have an item")
+        if float(entry.quantity_ordered or 0) <= 0:
+            raise HTTPException(status_code=400, detail="Ordered quantity must be greater than zero")
+
+        item_doc = None
+        if item_id_value > 0:
+            item_doc = await item_collection.find_one({"ItemID": item_id_value})
+        if not item_doc and item_lookup_code_input:
+            item_doc = await item_collection.find_one({"ItemLookupCode": item_lookup_code_input})
+        if not item_doc:
+            identifier = item_lookup_code_input or str(item_id_value)
+            raise HTTPException(status_code=404, detail=f"Item {identifier} was not found")
+
+        item_id = int(item_doc.get("ItemID") or entry.item_id or 0)
+        item_lookup_code = str(item_doc.get("ItemLookupCode", entry.item_lookup_code or "") or "")
+        item_description = (
+            entry.item_description.strip()
+            if entry.item_description and entry.item_description.strip()
+            else str(item_doc.get("Description", "") or "")
+        )
+        line_price = float(
+            item_doc.get(
+                "Price",
+                entry.price if entry.price is not None else 0,
+            )
+            or 0
+        )
+        costed_price = float(
+            item_doc.get(
+                "Cost",
+                item_doc.get(
+                    "LastCost",
+                    entry.costed_price if entry.costed_price is not None else line_price,
+                ),
+            )
+            or line_price
+        )
+        line_tax_rate = float(
+            entry.tax_rate
+            if entry.tax_rate is not None
+            else (payload.tax_rate or 0)
+        )
+
+        if line_price < 0 or costed_price < 0:
+            raise HTTPException(status_code=400, detail="Item price or cost cannot be negative")
+
+        entry_docs.append(
+            {
+                "ID": next_entry_id,
+                "PurchaseOrderID": next_purchase_order_id,
+                "StoreID": int(payload.store_id or 1),
+                "ItemID": item_id,
+                "ItemLookupCode": item_lookup_code,
+                "ItemDescription": item_description,
+                "QuantityOrdered": float(entry.quantity_ordered or 0),
+                "QuantityReceived": 0,
+                "QuantityReceivedToDate": 0,
+                "Price": line_price,
+                "CostedPrice": costed_price,
+                "TaxRate": line_tax_rate,
+                "OrderNumber": po_number,
+                "InventoryOfflineID": 0,
+                "LastUpdated": now,
+            }
+        )
+        next_entry_id += 1
+
+    batch_number = int(payload.batch_number) if payload.batch_number is not None else 5000 + next_po_id
+    pay_ref = int(payload.pay_ref) if payload.pay_ref is not None else 90000 + next_po_id
+    required_date = parse_optional_erp_datetime(payload.required_date)
+    date_placed = (
+        parse_optional_erp_datetime(payload.date_placed) or now
+        if bool(payload.is_placed)
+        else None
+    )
+
+    purchase_order_doc = {
+        "ID": next_po_id,
+        "LastUpdated": now,
+        "POTitle": po_title,
+        "POType": int(payload.po_type or 1),
+        "StoreID": int(payload.store_id or 1),
+        "WorkSheetID": next_purchase_order_id,
+        "PONumber": po_number,
+        "PStatus": int(payload.p_status or 0),
+        "DateCreated": now,
+        "PTo": p_to,
+        "ShipTo": ship_to,
+        "Requisioner": requisioner,
+        "ShipVia": payload.ship_via.strip() if payload.ship_via else "",
+        "FOBPoint": payload.fob_point.strip() if payload.fob_point else "",
+        "Terms": payload.terms.strip() if payload.terms else "",
+        "TaxRate": float(payload.tax_rate or 0),
+        "Shipping": float(payload.shipping or 0),
+        "Freight": payload.freight.strip() if payload.freight else "",
+        "RequiredDate": required_date,
+        "ConfirmingTo": payload.confirming_to.strip() if payload.confirming_to else "",
+        "Remarks": payload.remarks.strip() if payload.remarks else "",
+        "SupplierID": int(payload.supplier_id),
+        "OtherStoreID": 0,
+        "CurrencyID": int(payload.currency_id or 1),
+        "ExchangeRate": float(payload.exchange_rate or 1),
+        "UserID": int(payload.user_id or 1),
+        "UserID2": None,
+        "OtherPOID": None,
+        "OldSupplierID": None,
+        "InventoryLocation": int(payload.inventory_location or 1),
+        "IsPlaced": bool(payload.is_placed),
+        "DatePlaced": date_placed,
+        "BatchNumber": batch_number,
+        "PayRef": pay_ref,
+        "POisCancelled": False,
+        "POCancelledby": None,
+        "POCancelledOn": None,
+        "POAmendedby": None,
+        "POAmendedon": None,
+        "Picked": False,
+    }
+
+    await purchase_order_collection.insert_one(purchase_order_doc)
+    await purchase_order_entries_collection.insert_many(entry_docs)
+
+    supplier_name = str(supplier.get("SupplierName", supplier.get("Company", "")) or "")
+    return map_purchase_order_for_erp(purchase_order_doc, entry_docs, supplier_name)
+
+
+@app.get("/erp/users", response_model=List[ERPUserOut])
+async def list_erp_users(search: Optional[str] = Query(default=None), limit: int = Query(default=300, ge=1, le=2000)):
+    query = {}
+    if search:
+        query = {
+            "$or": [
+                {"Number": {"$regex": search, "$options": "i"}},
+                {"Name": {"$regex": search, "$options": "i"}},
+                {"EmailAddress": {"$regex": search, "$options": "i"}},
+                {"Telephone": {"$regex": search, "$options": "i"}},
+            ]
+        }
+
+    users = await cashier_collection.find(query).sort("ID", 1).to_list(limit)
+    return [map_cashier_for_erp(user) for user in users]
+
+
+@app.post("/erp/users", response_model=ERPUserOut, status_code=201)
+async def create_erp_user(payload: ERPUserCreate):
+    number = payload.number.strip()
+    password = payload.password.strip()
+    name = payload.name.strip() if payload.name else ""
+    email_address = payload.email_address.strip() if payload.email_address else ""
+    telephone = payload.telephone.strip() if payload.telephone else ""
+    user_role = payload.user_role.strip() if payload.user_role else "Cashier"
+
+    if not number:
+        raise HTTPException(status_code=400, detail="User number is required")
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required")
+    if payload.floor_limit < 0:
+        raise HTTPException(status_code=400, detail="Floor limit cannot be negative")
+    if payload.drop_limit < 0:
+        raise HTTPException(status_code=400, detail="Drop limit cannot be negative")
+
+    existing = await find_cashier_by_number(number)
+    if existing:
+        raise HTTPException(status_code=409, detail="User number already exists")
+
+    last_user = await cashier_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)]
+    )
+    next_id = int(last_user.get("ID", 0)) + 1 if last_user else 1
+
+    user_doc = {
+        "ID": next_id,
+        "LastUpdated": datetime.utcnow(),
+        "Number": number,
+        "StoreID": int(payload.store_id),
+        "Name": name if name else None,
+        "Pass": password,
+        "FloorLimit": float(payload.floor_limit),
+        "ReturnLimit": 0,
+        "DropLimit": float(payload.drop_limit),
+        "CashDrawerNumber": 0,
+        "SecurityLevel": 0,
+        "UserRole": user_role or "Cashier",
+        "Priviledges": int(payload.priviledges),
+        "EmailAddress": email_address if email_address else None,
+        "FailedLogonAttempts": 0,
+        "MaxOverShortAmount": 0,
+        "MaxOverShortPercent": 0,
+        "OverShortLimitType": 0,
+        "Telephone": telephone if telephone else None,
+        "Enabled": bool(payload.enabled),
+        "TimeSchedule": False,
+        "LastPasswordChange": None,
+        "PassExpires": True,
+        "InventoryLocation": 0,
+        "SalesRepID": 0,
+        "BinLocation": None,
+        "Signature": None,
+    }
+
+    await cashier_collection.insert_one(user_doc)
+    return map_cashier_for_erp(user_doc)
+
+
+@app.put("/erp/users/{user_id}", response_model=ERPUserOut)
+async def update_erp_user(user_id: int, payload: ERPUserUpdate):
+    number = payload.number.strip()
+    name = payload.name.strip() if payload.name else ""
+    user_role = payload.user_role.strip() if payload.user_role else "Cashier"
+    email_address = payload.email_address.strip() if payload.email_address else ""
+    telephone = payload.telephone.strip() if payload.telephone else ""
+    password = payload.password.strip() if payload.password else ""
+
+    if not number:
+        raise HTTPException(status_code=400, detail="User number is required")
+    if payload.floor_limit < 0:
+        raise HTTPException(status_code=400, detail="Floor limit cannot be negative")
+    if payload.drop_limit < 0:
+        raise HTTPException(status_code=400, detail="Drop limit cannot be negative")
+
+    existing = await cashier_collection.find_one({"ID": int(user_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    number_owner = await cashier_collection.find_one(
+        {
+            "Number": {
+                "$regex": f"^{re.escape(number)}$",
+                "$options": "i",
+            },
+            "ID": {"$ne": int(user_id)},
+        }
+    )
+    if number_owner:
+        raise HTTPException(status_code=409, detail="User number already exists")
+
+    update_fields = {
+        "Number": number,
+        "Name": name if name else None,
+        "UserRole": user_role or "Cashier",
+        "EmailAddress": email_address if email_address else None,
+        "Telephone": telephone if telephone else None,
+        "FloorLimit": float(payload.floor_limit),
+        "DropLimit": float(payload.drop_limit),
+        "Enabled": bool(payload.enabled),
+        "LastUpdated": datetime.utcnow(),
+    }
+    if password:
+        update_fields["Pass"] = password
+
+    await cashier_collection.update_one(
+        {"ID": int(user_id)},
+        {"$set": update_fields}
+    )
+    updated = await cashier_collection.find_one({"ID": int(user_id)})
+    return map_cashier_for_erp(updated)
+
+
+@app.get("/auth/configuration", response_model=AuthConfigurationOut)
+async def get_auth_configuration():
+    biometrics_value = parse_config_int(await get_configuration_value("Biometrics", 0), default=0)
+    threshold = await get_fingerprint_match_threshold()
+    enrolled_fingerprint_users = await count_enrolled_fingerprint_users()
+    return AuthConfigurationOut(
+        biometrics=biometrics_value == 1,
+        biometrics_value=biometrics_value,
+        fingerprint_match_threshold=threshold,
+        enrolled_fingerprint_users=enrolled_fingerprint_users,
+        biometrics_bootstrap_required=biometrics_value == 1 and enrolled_fingerprint_users == 0,
+    )
+
+
+@app.post("/auth/login/password", response_model=ERPUserOut)
+async def login_with_password(payload: PasswordLoginRequest):
+    biometrics_enabled = await get_biometrics_enabled()
+    enrolled_fingerprint_users = await count_enrolled_fingerprint_users()
+    if biometrics_enabled and enrolled_fingerprint_users > 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Password login is disabled because Biometrics is enabled in configurations.",
+        )
+
+    number = payload.number.strip()
+    password = payload.password.strip()
+
+    if not number:
+        raise HTTPException(status_code=400, detail="Cashier number is required")
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required")
+
+    cashier = await find_cashier_by_number(number)
+    if not cashier:
+        raise HTTPException(status_code=401, detail="Invalid cashier number or password")
+
+    if not bool(cashier.get("Enabled", True)):
+        raise HTTPException(status_code=403, detail="This cashier account is disabled")
+
+    stored_password = str(cashier.get("Pass", "") or "").strip()
+    if stored_password != password:
+        await cashier_collection.update_one(
+            {"_id": cashier["_id"]},
+            {"$inc": {"FailedLogonAttempts": 1}},
+        )
+        raise HTTPException(status_code=401, detail="Invalid cashier number or password")
+
+    await cashier_collection.update_one(
+        {"_id": cashier["_id"]},
+        {
+            "$set": {
+                "FailedLogonAttempts": 0,
+                "LastLogonAt": datetime.utcnow(),
+            }
+        },
+    )
+    cashier["FailedLogonAttempts"] = 0
+    return map_cashier_for_erp(cashier)
+
+
+@app.get("/auth/fingerprint-users", response_model=List[FingerprintAuthCandidate])
+async def get_fingerprint_auth_candidates(number: Optional[str] = Query(default=None)):
+    query = {"Enabled": True}
+    if number and number.strip():
+        query["Number"] = {
+            "$regex": f"^{re.escape(number.strip())}$",
+            "$options": "i",
+        }
+
+    users = await cashier_collection.find(query).sort("ID", 1).to_list(1000)
+    candidates = []
+    for user in users:
+        template_base64 = get_cashier_fingerprint_template(user)
+        if not template_base64:
+            continue
+
+        candidates.append(
+            FingerprintAuthCandidate(
+                id=int(user.get("ID", 0) or 0),
+                number=str(user.get("Number", "") or ""),
+                name=str(user.get("Name", "") or ""),
+                user_role=str(user.get("UserRole", "") or ""),
+                store_id=int(user.get("StoreID", 1) or 1),
+                template_base64=template_base64,
+                template_format=get_cashier_fingerprint_format(user),
+                fingerprint_updated_at=get_cashier_fingerprint_updated_at(user),
+            )
+        )
+
+    return candidates
+
+
+@app.post("/auth/users/{user_id}/fingerprint", response_model=ERPUserOut)
+async def save_user_fingerprint(user_id: int, payload: FingerprintEnrollmentRequest):
+    existing = await cashier_collection.find_one({"ID": int(user_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    template_base64 = payload.template_base64.strip()
+    if not template_base64:
+        raise HTTPException(status_code=400, detail="Fingerprint template is required")
+
+    update_fields = {
+        "FingerprintTemplate": template_base64,
+        "FingerprintTemplateFormat": (payload.template_format or "STANDARDPRO").strip().upper() or "STANDARDPRO",
+        "FingerprintUpdatedAt": datetime.utcnow(),
+        "LastUpdated": datetime.utcnow(),
+    }
+
+    if payload.image_quality is not None:
+        update_fields["FingerprintImageQuality"] = int(payload.image_quality)
+    if payload.nfiq is not None:
+        update_fields["FingerprintNfiq"] = int(payload.nfiq)
+    if payload.device_model:
+        update_fields["FingerprintDeviceModel"] = payload.device_model.strip()
+    if payload.device_serial:
+        update_fields["FingerprintDeviceSerial"] = payload.device_serial.strip()
+
+    await cashier_collection.update_one({"ID": int(user_id)}, {"$set": update_fields})
+    updated = await cashier_collection.find_one({"ID": int(user_id)})
+    return map_cashier_for_erp(updated)
+
+
+@app.get("/erp/dashboard/summary", response_model=ERPDashboardSummaryOut)
+async def get_erp_dashboard_summary():
+    total_baskets = await transaction_collection.count_documents({})
+    totals = await transaction_collection.aggregate(
+        [
+            {
+                "$project": {
+                    "numeric_total": {
+                        "$convert": {
+                            "input": "$Total",
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0,
+                        }
+                    }
+                }
+            },
+            {"$group": {"_id": None, "total_sales": {"$sum": "$numeric_total"}}},
+        ]
+    ).to_list(length=1)
+    total_sales = float((totals[0] if totals else {}).get("total_sales", 0) or 0)
+    return ERPDashboardSummaryOut(total_sales=total_sales, total_baskets=total_baskets)
+
+
+@app.get("/erp/dashboard/daily-sales", response_model=ERPDashboardDailySalesOut)
+async def get_erp_dashboard_daily_sales(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+):
+    today = datetime.utcnow().date()
+    resolved_date_to = date_to or today
+    resolved_date_from = date_from or resolved_date_to.replace(day=1)
+
+    if resolved_date_from > resolved_date_to:
+        raise HTTPException(status_code=400, detail="Date From cannot be later than Date To")
+
+    start_datetime = datetime.combine(resolved_date_from, datetime.min.time())
+    end_datetime = datetime.combine(resolved_date_to + timedelta(days=1), datetime.min.time())
+
+    rows = await transaction_collection.aggregate(
+        [
+            {
+                "$match": {
+                    "sdateTime": {
+                        "$gte": start_datetime,
+                        "$lt": end_datetime,
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "day_key": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": "$sdateTime",
+                        }
+                    },
+                    "numeric_total": {
+                        "$convert": {
+                            "input": "$Total",
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0,
+                        }
+                    },
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$day_key",
+                    "sales": {"$sum": "$numeric_total"},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+    ).to_list(length=400)
+
+    sales_lookup = {
+        str(row.get("_id", "")): float(row.get("sales", 0) or 0)
+        for row in rows
+    }
+
+    points: List[ERPDashboardDailySalesPointOut] = []
+    cursor = resolved_date_from
+    total_sales = 0.0
+
+    while cursor <= resolved_date_to:
+        day_key = cursor.isoformat()
+        sales = float(sales_lookup.get(day_key, 0) or 0)
+        total_sales += sales
+        points.append(
+            ERPDashboardDailySalesPointOut(
+                date=day_key,
+                label=cursor.strftime("%d %b"),
+                sales=sales,
+            )
+        )
+        cursor += timedelta(days=1)
+
+    return ERPDashboardDailySalesOut(
+        date_from=resolved_date_from,
+        date_to=resolved_date_to,
+        total_sales=total_sales,
+        points=points,
+    )
+
+
+@app.get("/erp/dashboard/category-sales", response_model=ERPDashboardCategorySalesOut)
+async def get_erp_dashboard_category_sales(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+):
+    today = datetime.utcnow().date()
+    resolved_date_to = date_to or today
+    resolved_date_from = date_from or resolved_date_to.replace(day=1)
+
+    if resolved_date_from > resolved_date_to:
+        raise HTTPException(status_code=400, detail="Date From cannot be later than Date To")
+
+    start_datetime = datetime.combine(resolved_date_from, datetime.min.time())
+    end_datetime = datetime.combine(resolved_date_to + timedelta(days=1), datetime.min.time())
+
+    transactions = await transaction_collection.find(
+        {
+            "sdateTime": {
+                "$gte": start_datetime,
+                "$lt": end_datetime,
+            }
+        },
+        {
+            "_id": 0,
+            "TransactionID": 1,
+        },
+    ).to_list(length=10000)
+
+    transaction_ids = [row.get("TransactionID") for row in transactions if row.get("TransactionID") is not None]
+    if not transaction_ids:
+        return ERPDashboardCategorySalesOut(
+            date_from=resolved_date_from,
+            date_to=resolved_date_to,
+            total_sales=0.0,
+            categories=[],
+        )
+
+    transaction_items = await transaction_items_collection.find(
+        {"TransactionID": {"$in": transaction_ids}},
+        {
+            "_id": 0,
+            "ItemID": 1,
+            "Quantity": 1,
+            "Price": 1,
+        },
+    ).to_list(length=50000)
+
+    if not transaction_items:
+        return ERPDashboardCategorySalesOut(
+            date_from=resolved_date_from,
+            date_to=resolved_date_to,
+            total_sales=0.0,
+            categories=[],
+        )
+
+    item_keys = sorted(
+        {
+            str(row.get("ItemID", "")).strip()
+            for row in transaction_items
+            if str(row.get("ItemID", "")).strip()
+        }
+    )
+    numeric_item_keys = [int(key) for key in item_keys if key.isdigit()]
+
+    item_match_filters = []
+    if item_keys:
+        item_match_filters.append({"ItemLookupCode": {"$in": item_keys}})
+    if numeric_item_keys:
+        item_match_filters.append({"ItemLookupCode": {"$in": numeric_item_keys}})
+        item_match_filters.append({"ItemID": {"$in": numeric_item_keys}})
+
+    item_docs = await item_collection.find(
+        {"$or": item_match_filters} if item_match_filters else {"_id": None},
+        {
+            "_id": 0,
+            "ItemLookupCode": 1,
+            "ItemID": 1,
+            "Category": 1,
+            "CategoryID": 1,
+            "DepartmentID": 1,
+        },
+    ).to_list(length=max(len(item_keys) * 2, 100))
+
+    category_docs = await categories_collection.find(
+        {},
+        {
+            "_id": 0,
+            "ID": 1,
+            "order": 1,
+            "name": 1,
+            "Name": 1,
+            "parent_id": 1,
+            "ParentID": 1,
+        },
+    ).to_list(length=1000)
+
+    categories_by_id = {}
+    categories_by_name = {}
+    for category_doc in category_docs:
+        category_identity = get_category_identity(category_doc)
+        category_name = normalize_category_name(
+            category_doc.get("name", category_doc.get("Name", ""))
+        )
+        if category_identity > 0 and category_identity not in categories_by_id:
+            categories_by_id[category_identity] = category_doc
+        if category_name:
+            categories_by_name[category_name.casefold()] = category_doc
+
+    category_lookup = {}
+    for item_doc in item_docs:
+        category_value = resolve_item_dashboard_category_name(
+            item_doc,
+            categories_by_id=categories_by_id,
+            categories_by_name=categories_by_name,
+        )
+
+        lookup_code = str(item_doc.get("ItemLookupCode", "") or "").strip()
+        item_id = str(item_doc.get("ItemID", "") or "").strip()
+        if lookup_code:
+            category_lookup[lookup_code] = category_value
+        if item_id:
+            category_lookup[item_id] = category_value
+
+    category_totals = {}
+    total_sales = 0.0
+
+    for row in transaction_items:
+        item_key = str(row.get("ItemID", "") or "").strip()
+        quantity = float(row.get("Quantity", 0) or 0)
+        price = float(row.get("Price", 0) or 0)
+        line_total = quantity * price
+
+        if line_total == 0:
+            continue
+
+        category_name = category_lookup.get(item_key) or "Uncategorized"
+        category_totals[category_name] = float(category_totals.get(category_name, 0) or 0) + line_total
+        total_sales += line_total
+
+    ranked_categories = sorted(
+        (
+            (name, float(value or 0))
+            for name, value in category_totals.items()
+            if float(value or 0) > 0
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    return ERPDashboardCategorySalesOut(
+        date_from=resolved_date_from,
+        date_to=resolved_date_to,
+        total_sales=float(total_sales or 0),
+        categories=[
+            ERPDashboardCategorySalesCategoryOut(category=name, sales=float(value or 0))
+            for name, value in ranked_categories
+        ],
+    )
+
+
+@app.get("/tender")
+async def get_tender():
+    """Fetch available tenders (Cash, M-Pesa, Card)."""
+    tenders = await tender_collection.find({}, {"_id": 0}).to_list(100)
+    return tenders
+
+@app.post("/transaction")
+async def post_transaction(data: TransactionData):
+    """Save transaction, items, and print receipt."""
+    deducted_items = []
+    inserted_transaction_id = None
+    inserted_item_ids = []
+
+    async def rollback_transaction_side_effects():
+        for code, quantity in deducted_items:
+            await item_collection.update_one(
+                {"ItemLookupCode": code},
+                {
+                    "$inc": {"quantity": quantity},
+                    "$set": {"LastUpdated": datetime.utcnow()},
+                }
+            )
+
+        if inserted_item_ids:
+            await transaction_items_collection.delete_many({"_id": {"$in": inserted_item_ids}})
+
+        if inserted_transaction_id is not None:
+            await transaction_collection.delete_one({"_id": inserted_transaction_id})
+
+    try:
+        transaction_id = int(datetime.now().timestamp())  # Unique numeric ID
+        required_quantities = {}
+
+        for item in data.items:
+            requested_quantity = int(item.quantity or 0)
+            if requested_quantity <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid quantity for {item.description or item.code}"
+                )
+            required_quantities[item.code] = required_quantities.get(item.code, 0) + requested_quantity
+
+        for item_code, requested_quantity in required_quantities.items():
+            update_result = await item_collection.update_one(
+                {
+                    "ItemLookupCode": item_code,
+                    "quantity": {"$gte": requested_quantity},
+                },
+                {
+                    "$inc": {"quantity": -requested_quantity},
+                    "$set": {"LastUpdated": datetime.utcnow()},
+                }
+            )
+
+            if update_result.modified_count == 0:
+                current_item = await item_collection.find_one({"ItemLookupCode": item_code})
+                description = current_item.get("Description", item_code) if current_item else item_code
+                available_quantity = get_item_stock_quantity(current_item or {})
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient stock for {description}. "
+                        f"Available: {available_quantity}, requested: {requested_quantity}"
+                    )
+                )
+
+            deducted_items.append((item_code, requested_quantity))
+
+        transaction_doc = {
+            "TransactionID": transaction_id,
+            "CashierID": data.cashier_id,
+            "CustomerID": data.customer_id,
+            "StoreID": data.store_id,
+            "sdateTime": datetime.utcnow(),
+            "Total": data.total,
+            "SalesTax": data.tax,
+            "Comment": data.comment,
+            "Tenders": [t.dict() for t in data.tenders],
+            "Status": 1
+        }
+        transaction_result = await transaction_collection.insert_one(transaction_doc)
+        inserted_transaction_id = transaction_result.inserted_id
+
+        items_list = []
+        for index, item in enumerate(data.items):
+            item_doc = {
+                "TransactionID": transaction_id,
+                "DetailedID": transaction_id * 100 + index,
+                "ItemID": item.code,
+                "Description": item.description,
+                "Quantity": item.quantity,
+                "Price": item.price,
+                "Taxable": item.taxable,
+                "SalesRepID": item.rep,
+                "StoreID": data.store_id,
+                "Cost": 0,
+                "FullPrice": 0,
+                "SalesTax": round(item.price * item.quantity * 0.08, 2) if item.taxable else 0,
+                "Comment": "POS Sale",
+                "DispatchTime": datetime.utcnow(),
+                "Dispatched": False
+            }
+            item_result = await transaction_items_collection.insert_one(item_doc)
+            inserted_item_ids.append(item_result.inserted_id)
+            items_list.append(item_doc)
+
+        # Try printing receipt
+        try:
+            printed = await print_receipt(transaction_doc, items_list, transaction_doc["Tenders"])
+            if printed:
+                logging.info(f"Receipt printed for transaction {transaction_id}")
+            else:
+                logging.warning(f"Receipt print returned False for transaction {transaction_id}")
+        except Exception as e:
+            logging.error(f"Printer error for transaction {transaction_id}: {e}")
+
+        logging.info(f"Transaction {transaction_id} saved successfully.")
+        return {
+            "message": "Transaction saved successfully",
+            "transaction_id": transaction_id
+        }
+
+    except HTTPException:
+        await rollback_transaction_side_effects()
+        raise
+    except Exception as e:
+        await rollback_transaction_side_effects()
+        logging.error(f"Transaction save error: {e}")
+        raise HTTPException(status_code=500, detail="Transaction processing failed")
+
+@app.post("/print-test")
+async def print_test_receipt():
+    """Test endpoint for printing a sample receipt"""
+    try:
+        # Sample transaction data for testing
+        transaction_doc = {
+            "TransactionID": 1001,
+            "CashierID": 1002,
+            "StoreID": 1,
+            "Total": 25.50,
+            "SalesTax": 2.04,
+            "Comment": "Test transaction"
+        }
+        
+        items_list = [
+            {
+                "Description": "Test Product With Long Name",
+                "Quantity": 2,
+                "Price": 10.00
+            },
+            {
+                "Description": "Another Test Product",
+                "Quantity": 1,
+                "Price": 5.50
+            }
+        ]
+        
+        tenders = [
+            {
+                "code": "Cash",
+                "amount": 25.50
+            }
+        ]
+        
+        # Try printing receipt
+        result = await print_receipt(transaction_doc, items_list, tenders)
+        
+        if result:
+            return {"message": "Test receipt printed successfully"}
+        else:
+            return {"message": "Failed to print test receipt"}
+            
+    except Exception as e:
+        logging.error(f"Test print error: {e}")
+        raise HTTPException(status_code=500, detail="Test print failed")
+
+
+
+@app.get("/loyalty/customer/{identifier}")
+async def get_loyalty_customer(identifier: str):
+    """Get loyalty customer by ID number, card number, or mobile number"""
+    try:
+        customer = None
+
+        # Try to find by ID number
+        customer = await loyalty_customers_collection.find_one({"Idnumber": identifier})
+
+        if not customer:
+            # Try to find by card number
+            customer = await loyalty_customers_collection.find_one({"Loyaltyno": identifier})
+
+        if not customer:
+            # Try to find by mobile number with flexible matching
+            if identifier.startswith("07") and len(identifier) == 10:
+                # Convert 07 format to 2547 format
+                international_format = "254" + identifier[1:]
+                customer = await loyalty_customers_collection.find_one({"Mobile": international_format})
+            elif identifier.startswith("2547") and len(identifier) == 12:
+                # Convert 2547 format to 07 format
+                local_format = "0" + identifier[3:]
+                customer = await loyalty_customers_collection.find_one({"Mobile": local_format})
+            else:
+                # Try direct match
+                customer = await loyalty_customers_collection.find_one({"Mobile": identifier})
+
+        if customer:
+            # Convert to dict if needed and safely remove _id
+            customer = dict(customer)
+            customer.pop("_id", None)
+            return {"success": True, "customer": customer}
+
+        return {"success": False, "message": "Customer not found"}
+
+    except Exception as e:
+        logging.error(f"Error fetching loyalty customer: {e}")
+        return {"success": False, "message": "Error fetching customer"}
+
+ 
+
+@app.get("/loyalty/customer/mobile/{mobile}")
+async def get_loyalty_customer_by_mobile(mobile: str):
+    """Get loyalty customer specifically by mobile number with various format handling"""
+    try:
+        # Handle different mobile number formats
+        search_numbers = [mobile]
+        
+        # If it's a Kenyan number, try different formats
+        if mobile.startswith("2547") and len(mobile) == 12:
+            # Convert to 07 format
+            local_format = "0" + mobile[3:]
+            search_numbers.append(local_format)
+        elif mobile.startswith("07") and len(mobile) == 10:
+            # Convert to 2547 format
+            international_format = "254" + mobile[1:]
+            search_numbers.append(international_format)
+        
+        # Try to find by any of the mobile number formats
+        customer = None
+        for number in search_numbers:
+            customer = await loyalty_customers_collection.find_one({"Mobile": number})
+            if customer:
+                break
+        
+        if customer:
+            # Remove _id from response
+            customer.pop("_id", None)
+            return {"success": True, "customer": customer}
+        else:
+            return {"success": False, "message": "Customer not found"}
+    except Exception as e:
+        logging.error(f"Error fetching loyalty customer by mobile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch customer")
+
+@app.get("/loyalty/customers/all")
+async def get_all_loyalty_customers():
+    """Get all loyalty customers (for debugging purposes)"""
+    try:
+        # Find all customers
+        cursor = loyalty_customers_collection.find({})
+        customers = await cursor.to_list(length=100)
+        
+        # Remove _id from each customer
+        for customer in customers:
+            customer.pop("_id", None)
+        
+        return {"success": True, "customers": customers}
+    except Exception as e:
+        logging.error(f"Error fetching all loyalty customers: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch customers")
+    
+    
+    # ==================== M-PESA STK PUSH ====================
+
+from fastapi import Request
+import os, requests, base64
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()  # Loads .env file from your backend folder
+
+@app.post("/api/mpesa/stkpush")
+async def stkpush(request: Request):
+    data = await request.json()
+    phone = data.get("phone")
+    amount = data.get("amount")
+    name = data.get("customer_name", "Customer")
+
+    consumer_key = os.getenv("MPESA_CONSUMER_KEY")
+    consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
+    shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE")
+    passkey = os.getenv("MPESA_PASSKEY")
+    mode = os.getenv("MPESA_MODE", "sandbox")
+
+    # Get token
+    url = (
+        "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+        if mode == "live"
+        else "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+    )
+    r = requests.get(url, auth=(consumer_key, consumer_secret))
+    token_data = r.json()
+    print("🔑 Token response:", token_data)
+    access_token = token_data.get("access_token")
+
+    if not access_token:
+        return {"success": False, "message": "Failed to get access token", "details": token_data}
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode("utf-8")
+
+    stk_url = (
+        "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+        if mode == "live"
+        else "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+    )
+
+    payload = {
+        "BusinessShortCode": shortcode,
+        "Password": password,
+        "Timestamp": timestamp,
+        "TransactionType": "CustomerBuyGoodsOnline",
+        "Amount": amount,
+        "PartyA": phone,
+        "PartyB": shortcode,
+        "PhoneNumber": phone,
+        "CallBackURL": "https://example.com/mpesa/callback",
+        "AccountReference": name,
+        "TransactionDesc": "POS Payment",
+    }
+
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    response = requests.post(stk_url, json=payload, headers=headers)
+    result = response.json()
+
+    print("📲 Safaricom STK Response:", result)
+
+    return {"success": True, "message": "STK push sent", "result": result}
+
+
+@app.post("/loyalty/customer")
+async def create_loyalty_customer(customer: LoyaltyCustomer):
+    """Create or update a loyalty customer"""
+    try:
+        # Check if customer already exists
+        existing_customer = await loyalty_customers_collection.find_one({
+            "$or": [
+                {"Idnumber": customer.Idnumber} if customer.Idnumber else {},
+                {"Loyaltyno": customer.Loyaltyno} if customer.Loyaltyno else {},
+                {"Mobile": customer.Mobile} if customer.Mobile else {}
+            ]
+        })
+        
+        customer_dict = customer.dict()
+        
+        if existing_customer:
+            # Update existing customer
+            result = await loyalty_customers_collection.update_one(
+                {"_id": existing_customer["_id"]},
+                {"$set": customer_dict}
+            )
+            return {"success": True, "message": "Customer updated successfully"}
+        else:
+            # Create new customer
+            result = await loyalty_customers_collection.insert_one(customer_dict)
+            return {"success": True, "message": "Customer created successfully"}
+    except Exception as e:
+        logging.error(f"Error creating/updating loyalty customer: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create/update customer")
+
+@app.post("/loyalty/award-points")
+async def award_loyalty_points(loyalty_transaction: LoyaltyTransaction):
+    """Award loyalty points to a customer"""
+    try:
+        # Find the customer by card number
+        customer = await loyalty_customers_collection.find_one({
+            "Loyaltyno": loyalty_transaction.Cardno
+        })
+        
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        
+        # Calculate new points
+        new_points = customer.get("Points", 0) + loyalty_transaction.Points
+        new_total_credit = customer.get("TotalCredit", 0) + loyalty_transaction.TransactionAmt
+        new_balance = customer.get("Balance", 0) + loyalty_transaction.TransactionAmt
+        new_bal2 = customer.get("Bal2", 0) + loyalty_transaction.TransactionAmt
+        
+        await loyalty_customers_collection.update_one(
+            {"_id": customer["_id"]},
+            {
+                "$set": {
+                    "Points": new_points,
+                    "TotalCredit": new_total_credit,
+                    "Balance": new_balance,
+                    "Bal2": new_bal2,
+                    "Lastupdated": datetime.utcnow()
+                }
+            }
+        )
+        
+        # Create loyalty transaction record
+        loyalty_transaction_data = loyalty_transaction.dict()
+        loyalty_transaction_data["Lastupdated"] = datetime.utcnow()
+        
+        await loyalty_transactions_collection.insert_one(loyalty_transaction_data)
+        
+        return {
+            "success": True,
+            "points_earned": loyalty_transaction.Points,
+            "total_points": new_points,
+            "message": f"Successfully awarded {loyalty_transaction.Points} points"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error awarding loyalty points: {e}")
+        raise HTTPException(status_code=500, detail="Failed to award points")
+
+def format_currency(v: float) -> str:
+    return f"{v:,.2f}"
+
+async def get_tender_description(code):
+    """Get full tender description from code"""
+    try:
+        tender = await tender_collection.find_one({"Code": code.upper()})
+        if tender:
+            return tender.get("Description", code)
+        return code
+    except Exception as e:
+        print(f"Error fetching tender description: {e}")
+        return code
+
+async def print_receipt(transaction_doc, items_list, tenders, loyalty_info=None):
+    """
+    Print receipt using POS printer - works with any thermal printer
+    """
+    try:
+        # Load configuration from environment variables
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        printer_type = os.getenv("PRINTER_TYPE", "windows")
+        printer_name = os.getenv("PRINTER_NAME", "POS-80C (copy 1)")
+        
+        # Extract transaction information
+        transaction_id = transaction_doc.get("TransactionID", 0)
+        store_id = transaction_doc.get("StoreID", 1)
+        cashier_id = transaction_doc.get("CashierID", 1002)
+        total = transaction_doc.get("Total", 0)
+        tax = transaction_doc.get("SalesTax", 0)
+        
+        # Convert tender codes to full descriptions
+        full_description_tenders = []
+        for tender in tenders:
+            full_description = await get_tender_description(tender.get("code") or tender.get("Code"))
+            full_description_tenders.append({
+                "code": full_description,
+                "amount": tender.get("amount", tender.get("Amount", 0.0))
+            })
+        
+        # --- Formatting helpers ---
+        def format_receipt_windows(transaction_doc, items_list):
+            """Format receipt for Windows driver printers (48 chars for 80mm printer)"""
+            line_width = 48
+
+            formatted_items = []
+            for item in items_list:
+                formatted_items.append({
+                    "name": item.get("Description", "")[:30],  # 30 chars for item
+                    "qty": item.get("Quantity", 1),
+                    "price": item.get("Price", 0.0)
+                })
+
+            store_name = "EASTLEIGH MATTRESSES LIMITED"
+            total = transaction_doc.get("Total", 0)
+            tax = transaction_doc.get("SalesTax", 0)
+
+            receipt_lines = []
+            receipt_lines.append(store_name.center(line_width))
+            receipt_lines.append("=" * line_width)
+            
+            # Add transaction details
+            receipt_lines.append(f"Transaction: {transaction_id}")
+            receipt_lines.append(f"Store: {store_id} | Cashier: {cashier_id}")
+            receipt_lines.append("-" * line_width)
+            
+            # Header row
+            receipt_lines.append(f"{'Item':30}{'Qty':>6}{'Price':>12}")
+            receipt_lines.append("-" * line_width)
+
+            # Item lines
+            for item in formatted_items:
+                name = item.get('name', '')[:30].ljust(30)
+                qty = str(item.get('qty', 1)).rjust(6)
+                price = f"{item.get('price', 0):.2f}".rjust(12)
+                receipt_lines.append(f"{name}{qty}{price}")
+
+            receipt_lines.append("-" * line_width)
+            receipt_lines.append(f"{'Tax:':>36}{tax:>12.2f}")
+            receipt_lines.append(f"{'TOTAL:':>36}{total:>12.2f}")
+            receipt_lines.append("=" * line_width)
+            
+            # Add tender information
+            if full_description_tenders:
+                receipt_lines.append("PAYMENT METHOD:")
+                for tender in full_description_tenders:
+                    receipt_lines.append(f"{tender['code']:30}{format_currency(tender['amount']):>18}")
+                receipt_lines.append("=" * line_width)
+            
+            # Add loyalty information if available
+            if loyalty_info:
+                receipt_lines.append(f"Loyalty Points Earned: {loyalty_info.get('points_earned', 0)}")
+                receipt_lines.append(f"Loyalty Points Balance: {loyalty_info.get('points_balance', 0)}")
+                if loyalty_info.get('customer_name'):
+                    receipt_lines.append(f"Customer: {loyalty_info.get('customer_name')}")
+            else:
+                receipt_lines.append("LOYALTY PROGRAM:")
+                receipt_lines.append("You earn 1 point for every KES 100 spent")
+            
+            receipt_lines.append("")
+            receipt_lines.append("Thank you for shopping with us!")
+            receipt_lines.append("Items sold are not returnable")
+            receipt_lines.append("Please check items & totals")
+            receipt_lines.append("before leaving the store.")
+            receipt_lines.append("")
+            return "\n".join(receipt_lines)
+
+        def format_receipt_escpos(transaction_doc, items_list):
+            """Format receipt for ESC/POS raw printing (48 chars for 80mm printer)"""
+            line_width = 48
+
+            formatted_items = []
+            for item in items_list:
+                formatted_items.append({
+                    "name": item.get("Description", "")[:30],  # 30 chars for item
+                    "qty": item.get("Quantity", 1),
+                    "price": item.get("Price", 0.0)
+                })
+
+            store_name = "EASTLEIGH MATTRESSES LIMITED"
+            total = transaction_doc.get("Total", 0)
+            tax = transaction_doc.get("SalesTax", 0)
+
+            receipt_lines = []
+            receipt_lines.append(store_name.center(line_width))
+            receipt_lines.append("=" * line_width)
+            
+            # Add transaction details
+            receipt_lines.append(f"Transaction: {transaction_id}")
+            receipt_lines.append(f"Store: {store_id} | Cashier: {cashier_id}")
+            receipt_lines.append("-" * line_width)
+            
+            # Header row
+            receipt_lines.append(f"{'Item':30}{'Qty':>6}{'Price':>12}")
+            receipt_lines.append("-" * line_width)
+
+            # Item lines
+            for item in formatted_items:
+                name = item.get('name', '')[:30].ljust(30)
+                qty = str(item.get('qty', 1)).rjust(6)
+                price = f"{item.get('price', 0):.2f}".rjust(12)
+                receipt_lines.append(f"{name}{qty}{price}")
+
+            receipt_lines.append("-" * line_width)
+            receipt_lines.append(f"{'Tax:':>36}{tax:>12.2f}")
+            receipt_lines.append(f"{'TOTAL:':>36}{total:>12.2f}")
+            receipt_lines.append("=" * line_width)
+            
+            # Add tender information
+            if full_description_tenders:
+                receipt_lines.append("PAYMENT METHOD:")
+                for tender in full_description_tenders:
+                    receipt_lines.append(f"{tender['code']:30}{format_currency(tender['amount']):>18}")
+                receipt_lines.append("=" * line_width)
+            
+            # Add loyalty information if available
+            if loyalty_info:
+                receipt_lines.append(f"Loyalty Points Earned: {loyalty_info.get('points_earned', 0)}")
+                receipt_lines.append(f"Loyalty Points Balance: {loyalty_info.get('points_balance', 0)}")
+                if loyalty_info.get('customer_name'):
+                    receipt_lines.append(f"Customer: {loyalty_info.get('customer_name')}")
+            else:
+                receipt_lines.append("LOYALTY PROGRAM:")
+                receipt_lines.append("You earn 1 point for every KES 100 spent")
+            
+            receipt_lines.append("")
+            receipt_lines.append("Thank you for shopping with us!")
+            receipt_lines.append("Items sold are not returnable")
+            receipt_lines.append("Please check items & totals")
+            receipt_lines.append("before leaving the store.")
+            receipt_lines.append("")
+            return "\n".join(receipt_lines)
+        
+        if printer_type == "windows" or printer_type == "auto":
+            try:
+                formatted_items = []
+                for item in items_list:
+                    formatted_items.append({
+                        "name": item.get("Description", "")[:30],
+                        "qty": item.get("Quantity", 1),
+                        "price": item.get("Price", 0.0)
+                    })
+
+                raw_printer = POSPrinter(printer_name)
+                if raw_printer.print_full_width_receipt(
+                    "EASTLEIGH MATTRESSES LIMITED",
+                    formatted_items,
+                    total,
+                    tax,
+                    transaction_id=transaction_id,
+                    register_id=store_id,
+                    cashier_id=cashier_id,
+                    tenders=full_description_tenders,
+                    loyalty_info=loyalty_info,
+                    footer_msg="Thank you for shopping with us!",
+                    printer_name=printer_name,
+                ):
+                    print("Receipt printed successfully via Windows RAW full width")
+                    return True
+                else:
+                    print("Windows RAW full width print failed")
+                    return False
+            except Exception as e:
+                print(f"Windows full width printing error: {e}")
+                return False
+
+        # --- Windows printing ---
+        if printer_type == "windows" or printer_type == "auto":
+            try:
+                import subprocess
+                import tempfile
+                
+                # ✅ Use Windows-friendly format (48 chars for 80mm printer)
+                receipt_content = format_receipt_windows(transaction_doc, items_list)
+                
+                # Write to a temporary file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    f.write(receipt_content)
+                    temp_filename = f.name
+                
+                # PowerShell print command
+                ps_command = f'Get-Content "{temp_filename}" | Out-Printer "{printer_name}"'
+                result = subprocess.run(['powershell', '-Command', ps_command],
+                                       capture_output=True, text=True)
+                
+                os.unlink(temp_filename)
+                
+                if result.returncode == 0:
+                    print("Receipt printed successfully via Windows printer")
+                    return True
+                else:
+                    print(f"Failed to print via Windows command: {result.stderr}")
+            except Exception as e:
+                print(f"Windows raw printing error: {e}")
+        
+        # --- ESC/POS printing ---
+        try:
+            printer = POSPrinter()
+            
+            if printer.connect_windows(printer_name):
+                print(f"Connected to Windows printer: {printer_name}")
+                
+                # Format items for the ESC/POS printer method
+                formatted_items = []
+                for item in items_list:
+                    formatted_items.append({
+                        "name": item.get("Description", "")[:30],  # 30 chars for item
+                        "qty": item.get("Quantity", 1),
+                        "price": item.get("Price", 0.0)
+                    })
+                
+                store_name = "EASTLEIGH MATTRESSES LIMITED"
+                total = transaction_doc.get("Total", 0)
+                tax = transaction_doc.get("SalesTax", 0)
+                
+                # Use the print_receipt method from POSPrinter class
+                if printer.print_receipt(store_name, formatted_items, total, tax):
+                    print("Receipt printed successfully via ESC/POS")
+                    return True
+                else:
+                    print("Failed to print receipt via ESC/POS")
+                    return False
+            else:
+                print(f"Failed to connect to Windows printer: {printer_name}")
+        except Exception as e:
+            print(f"ESC/POS printing error: {e}")
+        
+        print("No printer connected - printing to console for testing")
+        return False
+
+            
+    except Exception as e:
+        print(f"Error printing receipt: {e}")
+        return False

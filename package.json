@@ -1,0 +1,64 @@
+{
+  "name": "eastmatt-pos-app",
+  "version": "1.0.1",
+  "description": "Parhelion desktop POS and ERP clients with a server-hosted backend.",
+  "author": "James Macharia",
+  "homepage": ".",
+  "main": "electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jimmy-design/Parhelion-.git"
+  },
+  "scripts": {
+    "start": "npm run start:pos",
+    "start:pos": "concurrently \"npm run react-start\" \"npm run electron-start:pos\"",
+    "start:erp": "concurrently \"npm run react-start\" \"npm run electron-start:erp\"",
+    "react-start": "react-scripts start",
+    "electron-start": "npm run electron-start:pos",
+    "electron-start:pos": "wait-on http://localhost:3000 && node electron/start-electron.js pos",
+    "electron-start:erp": "wait-on http://localhost:3000 && node electron/start-electron.js erp",
+    "build": "npm run build:exe",
+    "build:exe": "npm run build:renderer && npm run package:pos && npm run package:erp",
+    "build:portable": "node electron/build-portable-folder.js",
+    "build:signed": "npm run build:renderer && npm run package:pos:signed && npm run package:erp:signed",
+    "build:renderer": "react-scripts build",
+    "build:pos": "npm run build:renderer && npm run package:pos",
+    "build:pos:signed": "npm run build:renderer && npm run package:pos:signed",
+    "build:erp": "npm run build:renderer && npm run package:erp",
+    "build:erp:signed": "npm run build:renderer && npm run package:erp:signed",
+    "package:pos": "electron-builder --config electron-builder.pos.js --config.win.signAndEditExecutable=false --publish never",
+    "package:pos:signed": "electron-builder --config electron-builder.pos.js",
+    "package:erp": "electron-builder --config electron-builder.erp.js --config.win.signAndEditExecutable=false --publish never",
+    "package:erp:signed": "electron-builder --config electron-builder.erp.js",
+    "release:pos": "electron-builder --config electron-builder.pos.js --config.win.signAndEditExecutable=false --publish always",
+    "release:erp": "electron-builder --config electron-builder.erp.js --config.win.signAndEditExecutable=false --publish always",
+    "release:installers": "npm run build:renderer && npm run release:pos && npm run release:erp",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "concurrently": "^7.6.0",
+    "electron-updater": "^6.8.3",
+    "lucide-react": "^0.536.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "wait-on": "^7.0.1"
+  },
+  "devDependencies": {
+    "electron": "^37.2.5",
+    "electron-builder": "^24.6.0",
+    "electron-rebuild": "^3.2.9",
+    "react-scripts": "^5.0.1"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "files": [
+    "build/**/*",
+    "electron/**/*",
+    "!electron/pos.db"
+  ],
+  "directories": {
+    "buildResources": "assets"
+  },
+  "asarUnpack": [
+    "electron/secugen-sdk-helper.ps1"
+  ],
+  "asar": true,
+  "npmRebuild": false,
+  "win": {
+    "target": "nsis",
+    "icon": "icon.ico"
+  }
+}

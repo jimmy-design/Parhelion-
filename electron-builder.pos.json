@@ -1,0 +1,15 @@
+{
+  "extends": "./electron-builder.base.json",
+  "appId": "com.eastmatt.pos",
+  "productName": "Eastmatt POS",
+  "extraMetadata": {
+    "main": "electron/main-pos.js"
+  },
+  "win": {
+    "artifactName": "pos-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false
+  }
+}

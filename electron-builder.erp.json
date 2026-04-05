@@ -1,0 +1,15 @@
+{
+  "extends": "./electron-builder.base.json",
+  "appId": "com.eastmatt.erp",
+  "productName": "Eastmatt ERP",
+  "extraMetadata": {
+    "main": "electron/main-erp.js"
+  },
+  "win": {
+    "artifactName": "erp-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false
+  }
+}
