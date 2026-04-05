@@ -4513,8 +4513,9 @@ function ErpApp({ currentUser, onLogout }) {
                   <div className="erp-settings-side-card">
                     <h4>Update Feed</h4>
                     <p>
-                      This installer checks the Parhelion GitHub release feed for the
-                      ERP channel when you use Check For Updates.
+                      This installer checks PARHELION GROUP LIMITED update release
+                      feed or ParhelionERP and ParhelionPOS channel when you use
+                      Check For Updates.
                     </p>
                   </div>
                 </aside>
