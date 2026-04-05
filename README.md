@@ -26,7 +26,7 @@ This project is wired for installer-based updates from GitHub Releases.
 
 1. Update `package.json` version.
 2. Commit changes.
-3. Create a tag like `v1.0.3`.
+3. Create a tag like `v1.0.5`.
 4. Push the branch and tag to GitHub.
 5. GitHub Actions builds and publishes installers plus update metadata.
 
