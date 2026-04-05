@@ -4402,10 +4402,6 @@ function ErpApp({ currentUser, onLogout }) {
                         {updateStatusLabel}
                       </span>
                       <h3>Application Updates</h3>
-                      <p>
-                        New ERP builds can appear here for download and installation
-                        without reinstalling manually on every machine.
-                      </p>
                     </div>
                     <div className="erp-update-version-chip">
                       <span>Current Version</span>
