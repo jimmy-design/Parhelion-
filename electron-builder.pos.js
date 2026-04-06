@@ -4,7 +4,7 @@ const { createGithubPublishConfig } = require("./electron/publish-config");
 module.exports = {
   ...baseConfig,
   appId: "com.eastmatt.pos",
-  productName: "Eastmatt POS",
+  productName: "ParhelionPOS",
   extraMetadata: {
     main: "electron/main-pos.js",
   },

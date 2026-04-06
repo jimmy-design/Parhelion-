@@ -8,6 +8,6 @@ import { getAppMode } from "./appConfig";
 const root = ReactDOM.createRoot(document.getElementById("root"));
 const appMode = getAppMode();
 
-document.title = appMode === "erp" ? "Eastmatt ERP" : "Eastmatt POS";
+document.title = appMode === "erp" ? "ParhelionERP" : "ParhelionPOS";
 
 root.render(<AuthShell appMode={appMode} />);

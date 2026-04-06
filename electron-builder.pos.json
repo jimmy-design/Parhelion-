@@ -1,7 +1,7 @@
 {
   "extends": "./electron-builder.base.json",
   "appId": "com.eastmatt.pos",
-  "productName": "Eastmatt POS",
+  "productName": "ParhelionPOS",
   "extraMetadata": {
     "main": "electron/main-pos.js"
   },

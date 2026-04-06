@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./ErpApp.css";
+import PriceChangeWorkspace from "./PriceChangeWorkspace";
 import {
   LayoutDashboard,
   BriefcaseBusiness,
@@ -104,6 +105,17 @@ const EMPTY_SUPPLIER_FORM = {
   endDate: "",
 };
 
+const EMPTY_PRICE_CHANGE_PRICE = {
+  default: "0",
+  A: "0",
+  B: "0",
+  C: "0",
+  sale: "0",
+  cost: "0",
+  lowerBound: "0",
+  upperBound: "0",
+};
+
 function formatLocalDateValue(date = new Date()) {
   const normalized = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return normalized.toISOString().slice(0, 10);
@@ -196,6 +208,142 @@ function createEmptyPurchaseOrderForm(requisioner = "") {
     isPlaced: true,
     datePlaced: formatLocalDateTimeValue(new Date()),
     entries: [],
+  };
+}
+
+function createEmptyPriceChangeLine() {
+  return {
+    rowId: `price-change-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: "",
+    itemLookupCode: "",
+    description: "",
+    stockAvailable: 0,
+    quantity: "1",
+    saleStart: "",
+    saleEnd: "",
+    timeBased: false,
+    loyaltyBased: false,
+    timeStart: "",
+    timeEnd: "",
+    price: { ...EMPTY_PRICE_CHANGE_PRICE },
+    oldPrice: { ...EMPTY_PRICE_CHANGE_PRICE },
+  };
+}
+
+function buildPriceChangePriceFromItem(item) {
+  return {
+    default: String(Number(item?.price || 0)),
+    A: String(Number(item?.price_a ?? item?.sale_price ?? item?.price ?? 0)),
+    B: String(Number(item?.price_b || 0)),
+    C: String(Number(item?.price_c || 0)),
+    sale: String(Number(item?.sale_price ?? item?.price_a ?? item?.price ?? 0)),
+    cost: String(Number(item?.cost || 0)),
+    lowerBound: String(Number(item?.lower_bound || 0)),
+    upperBound: String(Number(item?.upper_bound || 0)),
+  };
+}
+
+function buildPriceChangeLineFromItem(item) {
+  const line = createEmptyPriceChangeLine();
+  const price = buildPriceChangePriceFromItem(item);
+
+  return {
+    ...line,
+    id: String(item?.id || ""),
+    itemLookupCode: String(item?.lookup_code || ""),
+    description: String(item?.description || ""),
+    stockAvailable: Number(item?.stock_available ?? item?.stock ?? 0),
+    saleStart: formatDateTimeInputValue(item?.sale_start_date),
+    saleEnd: formatDateTimeInputValue(item?.sale_end_date),
+    price,
+    oldPrice: { ...price },
+  };
+}
+
+function createEmptyPriceChangeForm(user = "") {
+  const nextDate = new Date();
+  nextDate.setHours(nextDate.getHours() + 1);
+
+  return {
+    description: "",
+    effectDate: formatLocalDateTimeValue(nextDate),
+    type: "0",
+    storeId: "1",
+    purchaseOrderId: "",
+    status: "Open",
+    user: String(user || ""),
+    vendor: "",
+    creditNote: false,
+    creditNoteUser: "",
+    glPosted: false,
+    remarks: "",
+    flashPrice: false,
+    routeId: "0",
+    viewed: false,
+    items: [],
+  };
+}
+
+function mapPriceChangeToForm(priceChange, fallbackUser = "") {
+  const form = createEmptyPriceChangeForm(
+    priceChange?.user || fallbackUser || ""
+  );
+
+  return {
+    ...form,
+    description: String(priceChange?.description || ""),
+    effectDate: formatDateTimeInputValue(priceChange?.effect_date),
+    type: String(Number(priceChange?.type || 0)),
+    storeId: String(Number(priceChange?.store_id || 1)),
+    purchaseOrderId: priceChange?.purchase_order_id
+      ? String(Number(priceChange.purchase_order_id))
+      : "",
+    status: String(priceChange?.status || "Open"),
+    user: String(priceChange?.user || fallbackUser || ""),
+    vendor: String(priceChange?.vendor || ""),
+    creditNote: Boolean(priceChange?.credit_note),
+    creditNoteUser: String(priceChange?.credit_note_user || ""),
+    glPosted: Boolean(priceChange?.gl_posted),
+    remarks: String(priceChange?.remarks || ""),
+    flashPrice: Boolean(priceChange?.flash_price),
+    routeId: String(Number(priceChange?.route_id || 0)),
+    viewed: Boolean(priceChange?.viewed),
+    items: Array.isArray(priceChange?.items)
+      ? priceChange.items.map((item) => ({
+          rowId: `price-change-${priceChange?.id || "saved"}-${item?.id || item?.item_lookup_code || Math.random().toString(36).slice(2, 8)}`,
+          id: String(item?.id || ""),
+          itemLookupCode: String(item?.item_lookup_code || ""),
+          description: String(item?.description || ""),
+          stockAvailable: 0,
+          quantity: String(Number(item?.quantity || 0)),
+          saleStart: formatDateTimeInputValue(item?.sale_start),
+          saleEnd: formatDateTimeInputValue(item?.sale_end),
+          timeBased: Boolean(item?.time_based),
+          loyaltyBased: Boolean(item?.loyalty_based),
+          timeStart: String(item?.time_start || ""),
+          timeEnd: String(item?.time_end || ""),
+          price: {
+            default: String(Number(item?.price?.default || 0)),
+            A: String(Number(item?.price?.A || 0)),
+            B: String(Number(item?.price?.B || 0)),
+            C: String(Number(item?.price?.C || 0)),
+            sale: String(Number(item?.price?.sale || 0)),
+            cost: String(Number(item?.price?.cost || 0)),
+            lowerBound: String(Number(item?.price?.lowerBound || 0)),
+            upperBound: String(Number(item?.price?.upperBound || 0)),
+          },
+          oldPrice: {
+            default: String(Number(item?.old_price?.default || 0)),
+            A: String(Number(item?.old_price?.A || 0)),
+            B: String(Number(item?.old_price?.B || 0)),
+            C: String(Number(item?.old_price?.C || 0)),
+            sale: String(Number(item?.old_price?.sale || 0)),
+            cost: String(Number(item?.old_price?.cost || 0)),
+            lowerBound: String(Number(item?.old_price?.lowerBound || 0)),
+            upperBound: String(Number(item?.old_price?.upperBound || 0)),
+          },
+        }))
+      : [],
   };
 }
 
@@ -1243,6 +1391,15 @@ function ErpApp({ currentUser, onLogout }) {
   const [purchaseOrdersRecords, setPurchaseOrdersRecords] = useState([]);
   const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
   const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
+  const [priceChangesRecords, setPriceChangesRecords] = useState([]);
+  const [priceChangesLoading, setPriceChangesLoading] = useState(false);
+  const [priceChangesError, setPriceChangesError] = useState("");
+  const [selectedPriceChangeId, setSelectedPriceChangeId] = useState(null);
+  const [priceChangeComposerMode, setPriceChangeComposerMode] = useState("view");
+  const [savingPriceChange, setSavingPriceChange] = useState(false);
+  const [priceChangeActionPending, setPriceChangeActionPending] = useState(false);
+  const [priceChangeLookupValue, setPriceChangeLookupValue] = useState("");
+  const [priceChangeLookupPending, setPriceChangeLookupPending] = useState(false);
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState(null);
   const [selectedInventoryItemLookupCode, setSelectedInventoryItemLookupCode] = useState("");
   const [showAddSupplierForm, setShowAddSupplierForm] = useState(false);
@@ -1296,11 +1453,15 @@ function ErpApp({ currentUser, onLogout }) {
   const tableWrapRef = useRef(null);
   const purchaseOrderLookupInputRef = useRef(null);
   const purchaseOrderLookupQuantityRef = useRef(null);
+  const priceChangeLookupInputRef = useRef(null);
   const itemFormRequestRef = useRef(0);
   const [newItemForm, setNewItemForm] = useState({ ...EMPTY_ITEM_FORM });
   const [newSupplierForm, setNewSupplierForm] = useState({ ...EMPTY_SUPPLIER_FORM });
   const [newPurchaseOrderForm, setNewPurchaseOrderForm] = useState(() =>
     createEmptyPurchaseOrderForm("")
+  );
+  const [newPriceChangeForm, setNewPriceChangeForm] = useState(() =>
+    createEmptyPriceChangeForm("")
   );
   const [newUserForm, setNewUserForm] = useState({
     number: "",
@@ -1335,6 +1496,7 @@ function ErpApp({ currentUser, onLogout }) {
   const isStockOverviewView = activeNav === "inventory" && activeInventoryTab === "stock-overview";
   const isPurchaseOrdersView = activeNav === "inventory" && activeInventoryTab === "purchase-orders";
   const isReorderView = activeNav === "inventory" && activeInventoryTab === "reorder";
+  const isPriceChangeView = activeNav === "inventory" && activeInventoryTab === "price-change";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
     Number(dashboardSummary.totalBaskets || 0) > 0 || Number(dashboardSummary.totalSales || 0) > 0;
@@ -1752,6 +1914,24 @@ function ErpApp({ currentUser, onLogout }) {
     [itemsRecords]
   );
 
+  const priceChangesTableData = useMemo(
+    () => ({
+      columns: ["ID", "Description", "Vendor", "Effective", "Items", "Status", "User"],
+      rows: priceChangesRecords.map((priceChange) => [
+        String(priceChange.id || ""),
+        priceChange.description || "",
+        priceChange.vendor || "",
+        priceChange.effect_date
+          ? formatDisplayDateValue(priceChange.effect_date, true)
+          : "Immediate",
+        String(priceChange.total_items ?? (priceChange.items || []).length ?? 0),
+        priceChange.status || "Open",
+        priceChange.user || "",
+      ]),
+    }),
+    [priceChangesRecords]
+  );
+
   const purchaseOrderDraftTotal = useMemo(
     () => {
       const entriesTotal = newPurchaseOrderForm.entries.reduce((sum, entry) => {
@@ -1777,6 +1957,13 @@ function ErpApp({ currentUser, onLogout }) {
         (item) => String(item.lookup_code || "") === String(selectedInventoryItemLookupCode || "")
       ) || null,
     [itemsRecords, selectedInventoryItemLookupCode]
+  );
+  const selectedPriceChangeRecord = useMemo(
+    () =>
+      priceChangesRecords.find(
+        (priceChange) => Number(priceChange.id) === Number(selectedPriceChangeId)
+      ) || null,
+    [priceChangesRecords, selectedPriceChangeId]
   );
   const selectedSupplierRecord = useMemo(
     () =>
@@ -1826,6 +2013,23 @@ function ErpApp({ currentUser, onLogout }) {
       ],
     };
   }, [selectedSupplierRecord]);
+  const priceChangeSummary = useMemo(() => {
+    const currentTime = new Date();
+    const records = Array.isArray(priceChangesRecords) ? priceChangesRecords : [];
+    const approvedDue = records.filter((record) => {
+      if (String(record.status || "").toLowerCase() !== "approved") return false;
+      if (!record.effect_date) return true;
+      const effectDate = new Date(record.effect_date);
+      return !Number.isNaN(effectDate.getTime()) && effectDate <= currentTime;
+    }).length;
+
+    return {
+      open: records.filter((record) => String(record.status || "").toLowerCase() === "open").length,
+      approved: records.filter((record) => String(record.status || "").toLowerCase() === "approved").length,
+      applied: records.filter((record) => String(record.status || "").toLowerCase() === "applied").length,
+      approvedDue,
+    };
+  }, [priceChangesRecords]);
   const buildPurchaseOrderPreviewData = () => {
     const resolvedSupplier =
       suppliersRecords.find(
@@ -1956,6 +2160,8 @@ function ErpApp({ currentUser, onLogout }) {
       ? purchaseOrdersTableData
       : activeInventoryTab === "reorder"
       ? reorderTableData
+      : activeInventoryTab === "price-change"
+      ? priceChangesTableData
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
   const selectedWorkspaceData = isInventoryWorkspace ? selectedInventoryData : selectedManagementData;
   const filteredManagementRows = (selectedManagementData?.rows || []).filter((row) =>
@@ -1967,6 +2173,7 @@ function ErpApp({ currentUser, onLogout }) {
   const filteredItemsRecords = itemsRecords;
   const filteredSuppliersRecords = suppliersRecords;
   const filteredPurchaseOrdersRecords = purchaseOrdersRecords;
+  const filteredPriceChangesRecords = priceChangesRecords;
   const filteredUsersRecords = usersRecords;
   const filteredCategoriesRecords = categoriesRecords;
   const totalRecords = isItemsView
@@ -1975,6 +2182,8 @@ function ErpApp({ currentUser, onLogout }) {
     ? filteredSuppliersRecords.length
     : isPurchaseOrdersView
     ? filteredPurchaseOrdersRecords.length
+    : isPriceChangeView
+    ? filteredPriceChangesRecords.length
     : isUsersView
     ? filteredUsersRecords.length
     : isCategoriesView
@@ -1992,6 +2201,7 @@ function ErpApp({ currentUser, onLogout }) {
   const pagedItemsRecords = filteredItemsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedSuppliersRecords = filteredSuppliersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPurchaseOrdersRecords = filteredPurchaseOrdersRecords.slice(startIndex, startIndex + rowsPerPage);
+  const pagedPriceChangesRecords = filteredPriceChangesRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedUsersRecords = filteredUsersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedCategoriesRecords = filteredCategoriesRecords.slice(startIndex, startIndex + rowsPerPage);
 
@@ -2084,6 +2294,356 @@ function ErpApp({ currentUser, onLogout }) {
     }
   };
 
+  const resetPriceChangeForm = (overrides = {}) => {
+    const currentUserLabel =
+      currentUser?.name || currentUser?.number || "";
+    setNewPriceChangeForm({
+      ...createEmptyPriceChangeForm(currentUserLabel),
+      ...overrides,
+    });
+    setPriceChangeLookupValue("");
+  };
+
+  const openCreatePriceChangeComposer = () => {
+    resetPriceChangeForm();
+    setSelectedPriceChangeId(null);
+    setPriceChangeComposerMode("create");
+  };
+
+  const closePriceChangeComposer = () => {
+    resetPriceChangeForm();
+    setPriceChangeComposerMode("view");
+  };
+
+  const openEditPriceChangeComposer = () => {
+    if (!selectedPriceChangeRecord) {
+      pushAlert("warning", "Select a price change to edit.");
+      return;
+    }
+
+    const status = String(selectedPriceChangeRecord.status || "").toLowerCase();
+    if (status === "applied" || status === "cancelled") {
+      pushAlert("info", "Applied or cancelled price changes are kept read-only.");
+      return;
+    }
+
+    setNewPriceChangeForm(
+      mapPriceChangeToForm(
+        selectedPriceChangeRecord,
+        currentUser?.name || currentUser?.number || ""
+      )
+    );
+    setPriceChangeLookupValue("");
+    setPriceChangeComposerMode("edit");
+  };
+
+  const updatePriceChangeForm = (field, value) => {
+    setNewPriceChangeForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const updatePriceChangeItemField = (rowId, field, value) => {
+    setNewPriceChangeForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item) =>
+        item.rowId === rowId ? { ...item, [field]: value } : item
+      ),
+    }));
+  };
+
+  const updatePriceChangeItemPrice = (rowId, field, value) => {
+    setNewPriceChangeForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item) =>
+        item.rowId === rowId
+          ? {
+              ...item,
+              price: {
+                ...item.price,
+                [field]: value,
+              },
+            }
+          : item
+      ),
+    }));
+  };
+
+  const removePriceChangeItem = (rowId) => {
+    setNewPriceChangeForm((prev) => ({
+      ...prev,
+      items: prev.items.filter((item) => item.rowId !== rowId),
+    }));
+  };
+
+  const loadPriceChanges = async (search = "") => {
+    setPriceChangesLoading(true);
+    setPriceChangesError("");
+    try {
+      const query = search.trim()
+        ? `?search=${encodeURIComponent(search.trim())}`
+        : "";
+      const data = await fetchJsonWithFallback(
+        `/erp/price-changes${query}`,
+        undefined,
+        "Failed to load price changes"
+      );
+      setPriceChangesRecords(Array.isArray(data) ? data : []);
+    } catch (error) {
+      const message = error.message || "Failed to load price changes";
+      setPriceChangesError(message);
+    } finally {
+      setPriceChangesLoading(false);
+    }
+  };
+
+  const handleAddPriceChangeItem = async () => {
+    const lookupCode = priceChangeLookupValue.trim();
+    if (!lookupCode) {
+      pushAlert("warning", "Enter an item lookup code or barcode.");
+      return;
+    }
+
+    const duplicate = newPriceChangeForm.items.some(
+      (item) =>
+        String(item.itemLookupCode || "").trim().toLowerCase() ===
+        lookupCode.toLowerCase()
+    );
+    if (duplicate) {
+      pushAlert("info", `${lookupCode} is already in this price change.`);
+      return;
+    }
+
+    setPriceChangeLookupPending(true);
+    try {
+      const item = await fetchJsonWithFallback(
+        `/erp/items/by-lookup/${encodeURIComponent(lookupCode)}`,
+        undefined,
+        "Failed to load item for price change"
+      );
+      setNewPriceChangeForm((prev) => ({
+        ...prev,
+        items: [...prev.items, buildPriceChangeLineFromItem(item)],
+      }));
+      setPriceChangeLookupValue("");
+      pushAlert("success", `${item.description || lookupCode} added to the price change.`);
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to add item to price change.");
+    } finally {
+      setPriceChangeLookupPending(false);
+    }
+  };
+
+  const handleSavePriceChange = async (event) => {
+    event.preventDefault();
+
+    const description = newPriceChangeForm.description.trim();
+    if (!description) {
+      pushAlert("warning", "Description is required.");
+      return;
+    }
+
+    if (!newPriceChangeForm.items.length) {
+      pushAlert("warning", "Add at least one item to this price change.");
+      return;
+    }
+
+    const payload = {
+      description,
+      effect_date: newPriceChangeForm.effectDate
+        ? new Date(newPriceChangeForm.effectDate).toISOString()
+        : null,
+      type: Number(newPriceChangeForm.type || 0),
+      store_id: Number(newPriceChangeForm.storeId || 1),
+      purchase_order_id: newPriceChangeForm.purchaseOrderId
+        ? Number(newPriceChangeForm.purchaseOrderId)
+        : null,
+      status: newPriceChangeForm.status || "Open",
+      user:
+        newPriceChangeForm.user.trim() ||
+        currentUser?.name ||
+        currentUser?.number ||
+        "",
+      vendor: newPriceChangeForm.vendor.trim(),
+      credit_note: Boolean(newPriceChangeForm.creditNote),
+      credit_note_user: newPriceChangeForm.creditNoteUser.trim() || null,
+      gl_posted: Boolean(newPriceChangeForm.glPosted),
+      remarks: newPriceChangeForm.remarks.trim(),
+      flash_price: Boolean(newPriceChangeForm.flashPrice),
+      route_id: Number(newPriceChangeForm.routeId || 0),
+      viewed: Boolean(newPriceChangeForm.viewed),
+      items: newPriceChangeForm.items.map((item) => ({
+        id: item.id ? Number(item.id) : 0,
+        item_lookup_code: item.itemLookupCode.trim(),
+        description: item.description.trim(),
+        quantity: Number(item.quantity || 0),
+        sale_start: item.saleStart ? new Date(item.saleStart).toISOString() : null,
+        sale_end: item.saleEnd ? new Date(item.saleEnd).toISOString() : null,
+        time_based: Boolean(item.timeBased),
+        loyalty_based: Boolean(item.loyaltyBased),
+        time_start: item.timeStart || null,
+        time_end: item.timeEnd || null,
+        price: {
+          default: Number(item.price.default || 0),
+          A: Number(item.price.A || 0),
+          B: Number(item.price.B || 0),
+          C: Number(item.price.C || 0),
+          sale: Number(item.price.sale || 0),
+          cost: Number(item.price.cost || 0),
+          lowerBound: Number(item.price.lowerBound || 0),
+          upperBound: Number(item.price.upperBound || 0),
+        },
+        old_price: {
+          default: Number(item.oldPrice.default || 0),
+          A: Number(item.oldPrice.A || 0),
+          B: Number(item.oldPrice.B || 0),
+          C: Number(item.oldPrice.C || 0),
+          sale: Number(item.oldPrice.sale || 0),
+          cost: Number(item.oldPrice.cost || 0),
+          lowerBound: Number(item.oldPrice.lowerBound || 0),
+          upperBound: Number(item.oldPrice.upperBound || 0),
+        },
+      })),
+    };
+
+    const isEditingPriceChange =
+      priceChangeComposerMode === "edit" && selectedPriceChangeRecord;
+
+    setSavingPriceChange(true);
+    try {
+      const saved = await fetchJsonWithFallback(
+        isEditingPriceChange
+          ? `/erp/price-changes/${encodeURIComponent(String(selectedPriceChangeRecord.id))}`
+          : "/erp/price-changes",
+        {
+          method: isEditingPriceChange ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        "Failed to save price change"
+      );
+
+      setSelectedPriceChangeId(saved.id);
+      setPriceChangeComposerMode("view");
+      resetPriceChangeForm();
+      await loadPriceChanges(searchTerm);
+      pushAlert(
+        "success",
+        isEditingPriceChange
+          ? "Price change updated successfully."
+          : "Price change created successfully."
+      );
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to save price change");
+    } finally {
+      setSavingPriceChange(false);
+    }
+  };
+
+  const handleApproveSelectedPriceChange = async () => {
+    if (!selectedPriceChangeRecord) {
+      pushAlert("warning", "Select a price change to approve.");
+      return;
+    }
+
+    const status = String(selectedPriceChangeRecord.status || "").toLowerCase();
+    if (status === "applied") {
+      pushAlert("info", "This price change has already been applied.");
+      return;
+    }
+    if (status === "cancelled") {
+      pushAlert("warning", "Cancelled price changes cannot be approved.");
+      return;
+    }
+
+    setPriceChangeActionPending(true);
+    try {
+      const updated = await fetchJsonWithFallback(
+        `/erp/price-changes/${encodeURIComponent(String(selectedPriceChangeRecord.id))}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user: currentUser?.name || currentUser?.number || "",
+          }),
+        },
+        "Failed to approve price change"
+      );
+      setSelectedPriceChangeId(updated.id);
+      await loadPriceChanges(searchTerm);
+      pushAlert(
+        "success",
+        updated.status === "Applied"
+          ? "Price change approved and applied."
+          : "Price change approved successfully."
+      );
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to approve price change");
+    } finally {
+      setPriceChangeActionPending(false);
+    }
+  };
+
+  const handleApplySelectedPriceChange = async () => {
+    if (!selectedPriceChangeRecord) {
+      pushAlert("warning", "Select a price change to apply.");
+      return;
+    }
+
+    setPriceChangeActionPending(true);
+    try {
+      const updated = await fetchJsonWithFallback(
+        `/erp/price-changes/${encodeURIComponent(String(selectedPriceChangeRecord.id))}/apply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user: currentUser?.name || currentUser?.number || "",
+          }),
+        },
+        "Failed to apply price change"
+      );
+      setSelectedPriceChangeId(updated.id);
+      await loadPriceChanges(searchTerm);
+      pushAlert("success", "Price change applied successfully.");
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to apply price change");
+    } finally {
+      setPriceChangeActionPending(false);
+    }
+  };
+
+  const handleCancelSelectedPriceChange = async () => {
+    if (!selectedPriceChangeRecord) {
+      pushAlert("warning", "Select a price change to cancel.");
+      return;
+    }
+
+    setPriceChangeActionPending(true);
+    try {
+      const updated = await fetchJsonWithFallback(
+        `/erp/price-changes/${encodeURIComponent(String(selectedPriceChangeRecord.id))}/cancel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user: currentUser?.name || currentUser?.number || "",
+          }),
+        },
+        "Failed to cancel price change"
+      );
+      setSelectedPriceChangeId(updated.id);
+      setPriceChangeComposerMode("view");
+      await loadPriceChanges(searchTerm);
+      pushAlert("success", "Price change cancelled.");
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to cancel price change");
+    } finally {
+      setPriceChangeActionPending(false);
+    }
+  };
+
   const handleInventoryModuleAction = (actionLabel) => {
     if (selectedInventoryTab.id === "stock-overview" && actionLabel === "Low Stock") {
       setActiveInventoryTab("reorder");
@@ -2098,6 +2658,17 @@ function ErpApp({ currentUser, onLogout }) {
     if (selectedInventoryTab.id === "reorder" && actionLabel === "Generate Reorder") {
       pushAlert("info", "Reorder list refreshed from the live item stock levels.");
       return;
+    }
+
+    if (selectedInventoryTab.id === "price-change") {
+      if (actionLabel === "New Change") {
+        openCreatePriceChangeComposer();
+        return;
+      }
+      if (actionLabel === "Approve Prices") {
+        handleApproveSelectedPriceChange();
+        return;
+      }
     }
 
     if (selectedInventoryTab.id === "purchase-orders") {
@@ -3633,6 +4204,16 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isPurchaseOrdersView, searchTerm]);
 
   useEffect(() => {
+    if (!isPriceChangeView) return;
+
+    const timer = setTimeout(() => {
+      loadPriceChanges(searchTerm);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [isPriceChangeView, searchTerm]);
+
+  useEffect(() => {
     if (!showAddPurchaseOrderForm || !isPurchaseOrdersView || isViewingPurchaseOrder) {
       return undefined;
     }
@@ -3659,6 +4240,29 @@ function ErpApp({ currentUser, onLogout }) {
     if (selectedPurchaseOrderRecord) return;
     setSelectedPurchaseOrderId(null);
   }, [isPurchaseOrdersView, selectedPurchaseOrderId, selectedPurchaseOrderRecord]);
+
+  useEffect(() => {
+    if (!isPriceChangeView || selectedPriceChangeId === null) return;
+    if (selectedPriceChangeRecord) return;
+    setSelectedPriceChangeId(null);
+  }, [isPriceChangeView, selectedPriceChangeId, selectedPriceChangeRecord]);
+
+  useEffect(() => {
+    if (!isPriceChangeView || priceChangeComposerMode !== "view") return;
+    if (selectedPriceChangeId !== null) return;
+    if (!priceChangesRecords.length) return;
+    setSelectedPriceChangeId(priceChangesRecords[0].id);
+  }, [isPriceChangeView, priceChangeComposerMode, selectedPriceChangeId, priceChangesRecords]);
+
+  useEffect(() => {
+    if (!isPriceChangeView || priceChangeComposerMode !== "create") return;
+
+    const timer = window.setTimeout(() => {
+      priceChangeLookupInputRef.current?.focus();
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+  }, [isPriceChangeView, priceChangeComposerMode]);
 
   useEffect(() => {
     if (!isSuppliersView || selectedSupplierId === null) return;
@@ -3716,7 +4320,7 @@ function ErpApp({ currentUser, onLogout }) {
         <div className="erp-brand">
           <div className="erp-brand-badge">EM</div>
           <div>
-            <p className="erp-brand-title">Eastmatt ERP</p>
+            <p className="erp-brand-title">ParhelionERP</p>
             <p className="erp-brand-subtitle">Enterprise workspace</p>
           </div>
         </div>
@@ -3733,11 +4337,13 @@ function ErpApp({ currentUser, onLogout }) {
                   closePurchaseOrderForm();
                   closeUserForm();
                   closeCategoryForm();
+                  closePriceChangeComposer();
                   closeFingerprintModal();
                   setSelectedSupplierId(null);
                   setSelectedUserId(null);
                   setSelectedCategoryId(null);
                   setSelectedPurchaseOrderId(null);
+                  setSelectedPriceChangeId(null);
                 }}
                 type="button"
               >
@@ -3867,10 +4473,12 @@ function ErpApp({ currentUser, onLogout }) {
                   closePurchaseOrderForm();
                   closeUserForm();
                   closeCategoryForm();
+                  closePriceChangeComposer();
                   closeFingerprintModal();
                   setSelectedSupplierId(null);
                   setSelectedUserId(null);
                   setSelectedCategoryId(null);
+                  setSelectedPriceChangeId(null);
                 }}
                 type="button"
                 role="tab"
@@ -4017,7 +4625,10 @@ function ErpApp({ currentUser, onLogout }) {
                               !selectedPurchaseOrderRecord) ||
                             (isStockOverviewView &&
                               actionLabel === "Properties" &&
-                              !selectedInventoryItemRecord)
+                              !selectedInventoryItemRecord) ||
+                            (isPriceChangeView &&
+                              actionLabel === "Approve Prices" &&
+                              !selectedPriceChangeRecord)
                           }
                         >
                           {actionLabel}
@@ -4036,10 +4647,59 @@ function ErpApp({ currentUser, onLogout }) {
                 {isSuppliersView && suppliersError && <p className="erp-table-status erp-table-status-error">{suppliersError}</p>}
                 {isPurchaseOrdersView && purchaseOrdersLoading && <p className="erp-table-status">Loading purchase orders...</p>}
                 {isPurchaseOrdersView && purchaseOrdersError && <p className="erp-table-status erp-table-status-error">{purchaseOrdersError}</p>}
+                {isPriceChangeView && priceChangesLoading && <p className="erp-table-status">Loading price changes...</p>}
+                {isPriceChangeView && priceChangesError && <p className="erp-table-status erp-table-status-error">{priceChangesError}</p>}
                 {isUsersView && usersLoading && <p className="erp-table-status">Loading users...</p>}
                 {isUsersView && usersError && <p className="erp-table-status erp-table-status-error">{usersError}</p>}
                 {isCategoriesView && categoriesLoading && <p className="erp-table-status">Loading categories...</p>}
                 {isCategoriesView && categoriesError && <p className="erp-table-status erp-table-status-error">{categoriesError}</p>}
+                {isPriceChangeView ? (
+                  <PriceChangeWorkspace
+                    summary={priceChangeSummary}
+                    records={pagedPriceChangesRecords}
+                    totalRecords={totalRecords}
+                    selectedPriceChangeId={selectedPriceChangeId}
+                    onSelectPriceChange={(nextId) => {
+                      setSelectedPriceChangeId(nextId);
+                      if (priceChangeComposerMode !== "view") {
+                        setPriceChangeComposerMode("view");
+                      }
+                    }}
+                    composerMode={priceChangeComposerMode}
+                    selectedPriceChangeRecord={selectedPriceChangeRecord}
+                    onOpenCreate={openCreatePriceChangeComposer}
+                    onOpenEdit={openEditPriceChangeComposer}
+                    onCloseComposer={closePriceChangeComposer}
+                    form={newPriceChangeForm}
+                    onFormChange={updatePriceChangeForm}
+                    onItemFieldChange={updatePriceChangeItemField}
+                    onItemPriceChange={updatePriceChangeItemPrice}
+                    lookupValue={priceChangeLookupValue}
+                    onLookupValueChange={setPriceChangeLookupValue}
+                    lookupPending={priceChangeLookupPending}
+                    onAddItem={handleAddPriceChangeItem}
+                    lookupInputRef={priceChangeLookupInputRef}
+                    onRemoveItem={removePriceChangeItem}
+                    onSave={handleSavePriceChange}
+                    saving={savingPriceChange}
+                    onApprove={handleApproveSelectedPriceChange}
+                    onApply={handleApplySelectedPriceChange}
+                    onCancel={handleCancelSelectedPriceChange}
+                    actionPending={priceChangeActionPending}
+                    rowsPerPage={rowsPerPage}
+                    pageOptions={tablePageSizeOptions}
+                    onRowsPerPageChange={(nextValue) =>
+                      setRowsPerPage(Number(nextValue) || TABLE_PAGE_SIZE_OPTIONS[0])
+                    }
+                    pageStartRecord={pageStartRecord}
+                    pageEndRecord={pageEndRecord}
+                    safePage={safePage}
+                    totalPages={totalPages}
+                    onPrevPage={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    onNextPage={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    tableWrapRef={tableWrapRef}
+                  />
+                ) : (
                 <div className={`erp-table-region ${isSuppliersView ? "erp-supplier-view-layout" : ""}`.trim()}>
                   <div className={`${isSuppliersView ? "erp-supplier-main " : ""}erp-table-layout`.trim()}>
                 <div className="erp-table-wrap" ref={tableWrapRef}>
@@ -4392,6 +5052,7 @@ function ErpApp({ currentUser, onLogout }) {
                     </aside>
                   )}
                 </div>
+                )}
               </div>
             ) : activeNav === "settings" ? (
               <div className="erp-settings-layout">

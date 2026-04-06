@@ -863,7 +863,7 @@ function bootstrap(appVariant) {
     } catch (error) {
       console.error("Application startup failed:", error);
       dialog.showErrorBox(
-        `${appVariant === "erp" ? "Eastmatt ERP" : "Eastmatt POS"} could not start`,
+        `${appVariant === "erp" ? "ParhelionERP" : "ParhelionPOS"} could not start`,
         error?.message || String(error)
       );
       app.quit();

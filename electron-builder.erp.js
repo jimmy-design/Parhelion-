@@ -4,7 +4,7 @@ const { createGithubPublishConfig } = require("./electron/publish-config");
 module.exports = {
   ...baseConfig,
   appId: "com.eastmatt.erp",
-  productName: "Eastmatt ERP",
+  productName: "ParhelionERP",
   extraMetadata: {
     main: "electron/main-erp.js",
   },

@@ -31,7 +31,7 @@ function getAutoUpdater() {
 }
 
 function getAppLabel() {
-  return currentAppVariant === "erp" ? "Eastmatt ERP" : "Eastmatt POS";
+  return currentAppVariant === "erp" ? "ParhelionERP" : "ParhelionPOS";
 }
 
 function createInitialState() {

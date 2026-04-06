@@ -3,8 +3,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+from datetime import date, datetime, timedelta, timezone
 import logging
 import re
 
@@ -21,6 +21,7 @@ from database.mongodb import (
     configuration_collection,
     purchase_order_collection,
     purchase_order_entries_collection,
+    price_change_collection,
 )
 from utils.printer import POSPrinter
 from utils.receipt_formatter import generate_plain_receipt
@@ -81,6 +82,14 @@ class ERPItemOut(BaseModel):
     markup_percent: float
     taxable: bool
     consignment: bool
+    price_a: float = 0.0
+    price_b: float = 0.0
+    price_c: float = 0.0
+    lower_bound: float = 0.0
+    upper_bound: float = 0.0
+    sale_start_date: Optional[datetime] = None
+    sale_end_date: Optional[datetime] = None
+    supplier_id: int = 0
 
 
 class ERPDashboardSummaryOut(BaseModel):
@@ -413,11 +422,241 @@ class ERPPurchaseOrderOut(BaseModel):
     entries: List[ERPPurchaseOrderEntryOut] = []
 
 
+class ERPPriceBand(BaseModel):
+    default: float = 0.0
+    A: float = 0.0
+    B: float = 0.0
+    C: float = 0.0
+    sale: float = 0.0
+    cost: float = 0.0
+    lowerBound: float = 0.0
+    upperBound: float = 0.0
+
+
+class ERPPriceChangeItemCreate(BaseModel):
+    id: Optional[int] = 0
+    item_lookup_code: str
+    description: str = ""
+    quantity: float = 0.0
+    sale_start: Optional[str] = None
+    sale_end: Optional[str] = None
+    time_based: bool = False
+    loyalty_based: bool = False
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
+    price: ERPPriceBand
+    old_price: Optional[ERPPriceBand] = None
+
+
+class ERPPriceChangeCreate(BaseModel):
+    effect_date: Optional[str] = None
+    type: int = 0
+    description: str
+    store_id: int = 1
+    purchase_order_id: Optional[int] = None
+    status: str = "Open"
+    user: str = ""
+    vendor: str = ""
+    credit_note: bool = False
+    credit_note_user: Optional[str] = None
+    gl_posted: bool = False
+    remarks: str = ""
+    flash_price: bool = False
+    route_id: int = 0
+    viewed: bool = False
+    items: List[ERPPriceChangeItemCreate]
+
+
+class ERPPriceChangeUpdate(ERPPriceChangeCreate):
+    pass
+
+
+class ERPPriceChangeAction(BaseModel):
+    user: str = ""
+    remarks: str = ""
+
+
+class ERPPriceChangeItemOut(BaseModel):
+    id: int
+    item_lookup_code: str
+    description: str
+    last_updated: datetime
+    price: ERPPriceBand
+    old_price: ERPPriceBand
+    quantity: float = 0.0
+    sale_start: Optional[datetime] = None
+    sale_end: Optional[datetime] = None
+    time_based: bool = False
+    loyalty_based: bool = False
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
+
+
+class ERPPriceChangeOut(BaseModel):
+    id: int
+    time: datetime
+    effect_date: Optional[datetime] = None
+    type: int = 0
+    description: str
+    store_id: int = 1
+    total_items: int = 0
+    purchase_order_id: Optional[int] = None
+    status: str = "Open"
+    user: str = ""
+    vendor: str = ""
+    credit_note: bool = False
+    credit_note_user: Optional[str] = None
+    gl_posted: bool = False
+    remarks: str = ""
+    flash_price: bool = False
+    route_id: int = 0
+    viewed: bool = False
+    applied_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    last_updated: datetime
+    items: List[ERPPriceChangeItemOut] = []
+
+
+PRICE_CHANGE_STATUSES = {"Draft", "Open", "Approved", "Applied", "Cancelled"}
+PRICE_CHANGE_SYNC_INTERVAL_SECONDS = 5
+_last_price_change_sync_at: Optional[datetime] = None
+
+
+def parse_price_change_datetime(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def normalize_price_change_status(value: str) -> str:
+    normalized = str(value or "").strip().title()
+    return normalized if normalized in PRICE_CHANGE_STATUSES else "Open"
+
+
+def coerce_price_band(value: Optional[Dict[str, Any]], fallback: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+    source = value if isinstance(value, dict) else {}
+    fallback_source = fallback if isinstance(fallback, dict) else {}
+
+    def read_number(key: str, default: float = 0.0) -> float:
+        candidate = source.get(key, fallback_source.get(key, default))
+        try:
+            return float(candidate or 0)
+        except (TypeError, ValueError):
+            return float(default)
+
+    return {
+        "default": read_number("default"),
+        "A": read_number("A"),
+        "B": read_number("B"),
+        "C": read_number("C"),
+        "sale": read_number("sale"),
+        "cost": read_number("cost"),
+        "lowerBound": read_number("lowerBound"),
+        "upperBound": read_number("upperBound"),
+    }
+
+
+def build_item_price_band(doc: dict) -> Dict[str, float]:
+    price = float(doc.get("Price", 0) or 0)
+    sale_price = float(doc.get("SalePrice", doc.get("PriceA", price)) or 0)
+    cost = float(doc.get("Cost", doc.get("LastCost", 0)) or 0)
+    return {
+        "default": price,
+        "A": float(doc.get("PriceA", sale_price) or 0),
+        "B": float(doc.get("PriceB", 0) or 0),
+        "C": float(doc.get("PriceC", 0) or 0),
+        "sale": sale_price,
+        "cost": cost,
+        "lowerBound": float(doc.get("PriceLowerBound", 0) or 0),
+        "upperBound": float(doc.get("PriceUpperBound", 0) or 0),
+    }
+
+
+def get_item_effective_sale_price(doc: dict, now: Optional[datetime] = None) -> float:
+    current_time = now or datetime.utcnow()
+    default_price = float(doc.get("Price", 0) or 0)
+    sale_price = float(doc.get("SalePrice", default_price) or 0)
+    sale_start = parse_price_change_datetime(doc.get("SaleStartDate"))
+    sale_end = parse_price_change_datetime(doc.get("SaleEndDate"))
+
+    if sale_price <= 0:
+        return default_price
+
+    if sale_start and current_time < sale_start:
+        return default_price
+
+    if sale_end and current_time > sale_end:
+        return default_price
+
+    if sale_price != default_price:
+        return sale_price
+
+    return default_price
+
+
+def map_price_change_item_for_erp(doc: dict) -> ERPPriceChangeItemOut:
+    return ERPPriceChangeItemOut(
+        id=int(doc.get("ID", 0) or 0),
+        item_lookup_code=str(doc.get("ItemLookupCode", "") or ""),
+        description=str(doc.get("Description", "") or ""),
+        last_updated=parse_erp_datetime(doc.get("LastUpdated")),
+        price=ERPPriceBand(**coerce_price_band(doc.get("Price"))),
+        old_price=ERPPriceBand(**coerce_price_band(doc.get("OldPrice"))),
+        quantity=float(doc.get("Quantity", 0) or 0),
+        sale_start=parse_price_change_datetime(doc.get("SaleStart")),
+        sale_end=parse_price_change_datetime(doc.get("SaleEnd")),
+        time_based=bool(doc.get("TimeBased", False)),
+        loyalty_based=bool(doc.get("LoyaltyBased", False)),
+        time_start=str(doc.get("TimeStart", "") or ""),
+        time_end=str(doc.get("TimeEnd", "") or ""),
+    )
+
+
+def map_price_change_for_erp(doc: dict) -> ERPPriceChangeOut:
+    items = [map_price_change_item_for_erp(item) for item in doc.get("Items", []) if isinstance(item, dict)]
+    return ERPPriceChangeOut(
+        id=int(doc.get("ID", 0) or 0),
+        time=parse_erp_datetime(doc.get("Time")),
+        effect_date=parse_price_change_datetime(doc.get("EffectDate")),
+        type=int(doc.get("Type", 0) or 0),
+        description=str(doc.get("Description", "") or ""),
+        store_id=int(doc.get("StoreID", 1) or 1),
+        total_items=int(doc.get("TotalItems", len(items)) or 0),
+        purchase_order_id=int(doc.get("PurchaseOrderID", 0) or 0) or None,
+        status=normalize_price_change_status(doc.get("Status", "Open")),
+        user=str(doc.get("User", "") or ""),
+        vendor=str(doc.get("Vendor", "") or ""),
+        credit_note=bool(doc.get("CreditNote", False)),
+        credit_note_user=str(doc.get("CreditNoteUser", "") or "") or None,
+        gl_posted=bool(doc.get("GLPosted", False)),
+        remarks=str(doc.get("Remarks", "") or ""),
+        flash_price=bool(doc.get("FlashPrice", False)),
+        route_id=int(doc.get("RouteID", 0) or 0),
+        viewed=bool(doc.get("Viewed", False)),
+        applied_at=parse_price_change_datetime(doc.get("AppliedAt")),
+        approved_at=parse_price_change_datetime(doc.get("ApprovedAt")),
+        last_updated=parse_erp_datetime(doc.get("LastUpdated")),
+        items=items,
+    )
+
+
 def map_item_for_erp(doc: dict) -> ERPItemOut:
     item_id = doc.get("ItemID", doc.get("ID", ""))
     price = float(doc.get("Price", 0) or 0)
     cost = float(doc.get("Cost", doc.get("LastCost", 0)) or 0)
-    sale_price = float(doc.get("SalePrice", doc.get("PriceA", price)) or 0)
+    sale_price = get_item_effective_sale_price(doc)
     reorder_level = float(doc.get("ReorderPoint", 0) or 0)
     stock_available = get_item_stock_quantity(doc)
     alias = str(doc.get("Alias", doc.get("alias", "")))
@@ -445,7 +684,15 @@ def map_item_for_erp(doc: dict) -> ERPItemOut:
         reorder_level=reorder_level,
         markup_percent=float(doc.get("MarkupPercent", 0) or 0),
         taxable=bool(doc.get("Taxable", False)),
-        consignment=bool(doc.get("Consignment", False))
+        consignment=bool(doc.get("Consignment", False)),
+        price_a=float(doc.get("PriceA", sale_price) or 0),
+        price_b=float(doc.get("PriceB", 0) or 0),
+        price_c=float(doc.get("PriceC", 0) or 0),
+        lower_bound=float(doc.get("PriceLowerBound", 0) or 0),
+        upper_bound=float(doc.get("PriceUpperBound", 0) or 0),
+        sale_start_date=parse_price_change_datetime(doc.get("SaleStartDate")),
+        sale_end_date=parse_price_change_datetime(doc.get("SaleEndDate")),
+        supplier_id=int(doc.get("SupplierID", 0) or 0),
     )
 
 
@@ -790,6 +1037,211 @@ def parse_optional_erp_datetime(value) -> Optional[datetime]:
     return None
 
 
+def build_price_change_item_doc(
+    payload: ERPPriceChangeItemCreate,
+    source_item: Optional[dict] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    current_time = now or datetime.utcnow()
+    source_price_band = build_item_price_band(source_item or {})
+    old_price_band = (
+        payload.old_price.dict()
+        if payload.old_price is not None
+        else source_price_band
+    )
+    next_price_band = coerce_price_band(payload.price.dict(), fallback=old_price_band)
+    item_identity = int(payload.id or (source_item or {}).get("ItemID", 0) or 0)
+
+    return {
+        "ID": item_identity,
+        "ItemLookupCode": str(payload.item_lookup_code or "").strip(),
+        "Description": str(
+            payload.description
+            or (source_item or {}).get("Description", "")
+            or ""
+        ).strip(),
+        "LastUpdated": current_time,
+        "Price": next_price_band,
+        "OldPrice": coerce_price_band(old_price_band),
+        "Quantity": float(payload.quantity or 0),
+        "SaleStart": parse_price_change_datetime(payload.sale_start),
+        "SaleEnd": parse_price_change_datetime(payload.sale_end),
+        "TimeBased": bool(payload.time_based),
+        "LoyaltyBased": bool(payload.loyalty_based),
+        "TimeStart": str(payload.time_start or "").strip(),
+        "TimeEnd": str(payload.time_end or "").strip(),
+    }
+
+
+def build_price_change_doc(
+    price_change_id: int,
+    payload: ERPPriceChangeCreate,
+    item_docs: List[dict],
+    now: Optional[datetime] = None,
+    existing_doc: Optional[dict] = None,
+) -> dict:
+    current_time = now or datetime.utcnow()
+    normalized_status = normalize_price_change_status(payload.status)
+    existing_approved_at = parse_price_change_datetime((existing_doc or {}).get("ApprovedAt"))
+    existing_applied_at = parse_price_change_datetime((existing_doc or {}).get("AppliedAt"))
+
+    return {
+        "ID": int(price_change_id),
+        "Time": parse_price_change_datetime((existing_doc or {}).get("Time")) or current_time,
+        "EffectDate": parse_price_change_datetime(payload.effect_date),
+        "Type": int(payload.type or 0),
+        "Description": payload.description.strip(),
+        "StoreID": int(payload.store_id or 1),
+        "TotalItems": len(item_docs),
+        "PurchaseOrderID": int(payload.purchase_order_id or 0),
+        "Status": normalized_status,
+        "User": str(payload.user or "").strip(),
+        "Vendor": str(payload.vendor or "").strip(),
+        "CreditNote": bool(payload.credit_note),
+        "CreditNoteUser": str(payload.credit_note_user or "").strip(),
+        "GLPosted": bool(payload.gl_posted),
+        "Remarks": str(payload.remarks or "").strip(),
+        "FlashPrice": bool(payload.flash_price),
+        "RouteID": int(payload.route_id or 0),
+        "Viewed": bool(payload.viewed),
+        "Items": item_docs,
+        "LastUpdated": current_time,
+        "ApprovedAt": (
+            existing_approved_at
+            if normalized_status == "Applied"
+            else (existing_approved_at or current_time)
+            if normalized_status == "Approved"
+            else None
+        ),
+        "AppliedAt": existing_applied_at if normalized_status == "Applied" else None,
+    }
+
+
+async def apply_price_change_document(price_change_doc: dict, applied_at: Optional[datetime] = None):
+    current_time = applied_at or datetime.utcnow()
+    current_doc = price_change_doc
+    applied_lookup_codes = []
+
+    for item_doc in current_doc.get("Items", []):
+        lookup_code = str(item_doc.get("ItemLookupCode", "") or "").strip()
+        if not lookup_code:
+            continue
+
+        existing_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        if not existing_item:
+            continue
+
+        next_price_band = coerce_price_band(
+            item_doc.get("Price"),
+            fallback=build_item_price_band(existing_item),
+        )
+        sale_start = parse_price_change_datetime(item_doc.get("SaleStart"))
+        sale_end = parse_price_change_datetime(item_doc.get("SaleEnd"))
+        default_price = float(next_price_band["default"] or 0)
+        sale_price = float(next_price_band["sale"] or default_price)
+
+        if sale_end and sale_end < current_time:
+            sale_start = None
+            sale_end = None
+            sale_price = default_price
+
+        update_fields = {
+            "Price": default_price,
+            "PriceA": float(next_price_band["A"] or sale_price),
+            "PriceB": float(next_price_band["B"] or 0),
+            "PriceC": float(next_price_band["C"] or 0),
+            "SalePrice": sale_price,
+            "SaleStartDate": sale_start,
+            "SaleEndDate": sale_end,
+            "Cost": float(next_price_band["cost"] or 0),
+            "LastCost": float(next_price_band["cost"] or 0),
+            "PriceLowerBound": float(next_price_band["lowerBound"] or 0),
+            "PriceUpperBound": float(next_price_band["upperBound"] or 0),
+            "LastUpdated": current_time,
+        }
+
+        await item_collection.update_one(
+            {"_id": existing_item["_id"]},
+            {"$set": update_fields},
+        )
+        applied_lookup_codes.append(lookup_code)
+
+    await price_change_collection.update_one(
+        {"_id": current_doc["_id"]},
+        {
+            "$set": {
+                "Status": "Applied",
+                "AppliedAt": current_time,
+                "Viewed": True,
+                "LastUpdated": current_time,
+            }
+        },
+    )
+    updated_doc = await price_change_collection.find_one({"_id": current_doc["_id"]})
+    return updated_doc, applied_lookup_codes
+
+
+async def clear_expired_sale_prices(now: Optional[datetime] = None):
+    current_time = now or datetime.utcnow()
+    sale_items = await item_collection.find(
+        {"SaleEndDate": {"$ne": None}},
+        {
+            "_id": 1,
+            "Price": 1,
+            "SalePrice": 1,
+            "SaleStartDate": 1,
+            "SaleEndDate": 1,
+        },
+    ).to_list(5000)
+
+    for item_doc in sale_items:
+        sale_end = parse_price_change_datetime(item_doc.get("SaleEndDate"))
+        if not sale_end or sale_end > current_time:
+            continue
+
+        default_price = float(item_doc.get("Price", 0) or 0)
+        await item_collection.update_one(
+            {"_id": item_doc["_id"]},
+            {
+                "$set": {
+                    "SalePrice": default_price,
+                    "SaleStartDate": None,
+                    "SaleEndDate": None,
+                    "LastUpdated": current_time,
+                }
+            },
+        )
+
+
+async def apply_due_approved_price_changes(now: Optional[datetime] = None):
+    current_time = now or datetime.utcnow()
+    approved_changes = await price_change_collection.find(
+        {"Status": "Approved"}
+    ).sort("EffectDate", 1).to_list(500)
+
+    for change_doc in approved_changes:
+        effect_date = parse_price_change_datetime(change_doc.get("EffectDate"))
+        if effect_date and effect_date > current_time:
+            continue
+        await apply_price_change_document(change_doc, applied_at=current_time)
+
+
+async def ensure_price_change_updates_synced(force: bool = False):
+    global _last_price_change_sync_at
+
+    now = datetime.utcnow()
+    if (
+        not force
+        and _last_price_change_sync_at is not None
+        and (now - _last_price_change_sync_at).total_seconds() < PRICE_CHANGE_SYNC_INTERVAL_SECONDS
+    ):
+        return
+
+    await apply_due_approved_price_changes(now)
+    await clear_expired_sale_prices(now)
+    _last_price_change_sync_at = now
+
+
 def map_supplier_for_erp(doc: dict) -> ERPSupplierOut:
     contact_block = doc.get("Contact") if isinstance(doc.get("Contact"), dict) else {}
     address_block = doc.get("Address") if isinstance(doc.get("Address"), dict) else {}
@@ -1090,6 +1542,7 @@ async def read_root():
 @app.get("/item/{code}")
 async def get_item(code: str):
     """Fetch item details from DB."""
+    await ensure_price_change_updates_synced()
     item = await item_collection.find_one(
         {
             "$or": [
@@ -1102,10 +1555,11 @@ async def get_item(code: str):
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     stock_available = get_item_stock_quantity(item)
+    selling_price = get_item_effective_sale_price(item)
     return {
         "code": item.get("ItemLookupCode", ""),
         "description": item.get("Description", ""),
-        "price": float(item.get("Price", 0)),
+        "price": selling_price,
         "taxable": item.get("Taxable", False),
         "quantity": stock_available,
         "stock_available": stock_available,
@@ -1115,6 +1569,7 @@ async def get_item(code: str):
 
 @app.get("/erp/items", response_model=List[ERPItemOut])
 async def list_erp_items(search: Optional[str] = Query(default=None), limit: int = Query(default=300, ge=1, le=2000)):
+    await ensure_price_change_updates_synced()
     query = {}
     if search:
         query = {
@@ -1133,6 +1588,7 @@ async def list_erp_items(search: Optional[str] = Query(default=None), limit: int
 
 @app.get("/erp/items/by-lookup/{lookup_code}", response_model=ERPItemOut)
 async def get_erp_item_by_lookup(lookup_code: str):
+    await ensure_price_change_updates_synced()
     item = await find_erp_item_by_lookup_or_id(lookup_code)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1925,6 +2381,221 @@ async def create_erp_purchase_order(payload: ERPPurchaseOrderCreate):
 
     supplier_name = str(supplier.get("SupplierName", supplier.get("Company", "")) or "")
     return map_purchase_order_for_erp(purchase_order_doc, entry_docs, supplier_name)
+
+
+@app.get("/erp/price-changes", response_model=List[ERPPriceChangeOut])
+async def list_erp_price_changes(
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=2000),
+):
+    await ensure_price_change_updates_synced(force=True)
+
+    query = {}
+    if search:
+        regex = {"$regex": search, "$options": "i"}
+        query = {
+            "$or": [
+                {"Description": regex},
+                {"Vendor": regex},
+                {"Status": regex},
+                {"User": regex},
+                {"Remarks": regex},
+                {"Items": {"$elemMatch": {"ItemLookupCode": regex}}},
+                {"Items": {"$elemMatch": {"Description": regex}}},
+            ]
+        }
+
+    changes = await price_change_collection.find(query).sort(
+        [("Time", -1), ("ID", -1)]
+    ).to_list(limit)
+    return [map_price_change_for_erp(change) for change in changes]
+
+
+@app.get("/erp/price-changes/{change_id}", response_model=ERPPriceChangeOut)
+async def get_erp_price_change(change_id: int):
+    await ensure_price_change_updates_synced(force=True)
+
+    change = await price_change_collection.find_one({"ID": int(change_id)})
+    if not change:
+        raise HTTPException(status_code=404, detail="Price change not found")
+
+    return map_price_change_for_erp(change)
+
+
+@app.post("/erp/price-changes", response_model=ERPPriceChangeOut, status_code=201)
+async def create_erp_price_change(payload: ERPPriceChangeCreate):
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Add at least one item to the price change")
+
+    now = datetime.utcnow()
+    last_change = await price_change_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)],
+    )
+    next_id = int(last_change.get("ID", 0) or 0) + 1 if last_change else 1
+
+    seen_lookup_codes = set()
+    item_docs = []
+    for item_payload in payload.items:
+        lookup_code = str(item_payload.item_lookup_code or "").strip()
+        if not lookup_code:
+            raise HTTPException(status_code=400, detail="Each price change item needs a lookup code")
+        normalized_lookup = lookup_code.lower()
+        if normalized_lookup in seen_lookup_codes:
+            raise HTTPException(status_code=409, detail=f"Duplicate price change item: {lookup_code}")
+        seen_lookup_codes.add(normalized_lookup)
+
+        source_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        if not source_item:
+            raise HTTPException(status_code=404, detail=f"Item not found: {lookup_code}")
+
+        item_docs.append(build_price_change_item_doc(item_payload, source_item=source_item, now=now))
+
+    price_change_doc = build_price_change_doc(next_id, payload, item_docs, now=now)
+    await price_change_collection.insert_one(price_change_doc)
+    created = await price_change_collection.find_one({"ID": next_id})
+
+    next_status = normalize_price_change_status(payload.status)
+    effect_date = parse_price_change_datetime(payload.effect_date)
+    if next_status == "Applied" or (
+        next_status == "Approved" and (effect_date is None or effect_date <= now)
+    ):
+        created, _ = await apply_price_change_document(created, applied_at=now)
+
+    return map_price_change_for_erp(created)
+
+
+@app.put("/erp/price-changes/{change_id}", response_model=ERPPriceChangeOut)
+async def update_erp_price_change(change_id: int, payload: ERPPriceChangeUpdate):
+    existing = await price_change_collection.find_one({"ID": int(change_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Price change not found")
+
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Add at least one item to the price change")
+
+    now = datetime.utcnow()
+    seen_lookup_codes = set()
+    item_docs = []
+    for item_payload in payload.items:
+        lookup_code = str(item_payload.item_lookup_code or "").strip()
+        if not lookup_code:
+            raise HTTPException(status_code=400, detail="Each price change item needs a lookup code")
+        normalized_lookup = lookup_code.lower()
+        if normalized_lookup in seen_lookup_codes:
+            raise HTTPException(status_code=409, detail=f"Duplicate price change item: {lookup_code}")
+        seen_lookup_codes.add(normalized_lookup)
+
+        source_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        if not source_item:
+            raise HTTPException(status_code=404, detail=f"Item not found: {lookup_code}")
+
+        item_docs.append(build_price_change_item_doc(item_payload, source_item=source_item, now=now))
+
+    update_doc = build_price_change_doc(
+        int(change_id),
+        payload,
+        item_docs,
+        now=now,
+        existing_doc=existing,
+    )
+    await price_change_collection.update_one(
+        {"_id": existing["_id"]},
+        {"$set": update_doc},
+    )
+    updated = await price_change_collection.find_one({"_id": existing["_id"]})
+
+    next_status = normalize_price_change_status(payload.status)
+    effect_date = parse_price_change_datetime(payload.effect_date)
+    if next_status == "Applied" or (
+        next_status == "Approved" and (effect_date is None or effect_date <= now)
+    ):
+        updated, _ = await apply_price_change_document(updated, applied_at=now)
+
+    return map_price_change_for_erp(updated)
+
+
+@app.post("/erp/price-changes/{change_id}/approve", response_model=ERPPriceChangeOut)
+async def approve_erp_price_change(change_id: int, payload: ERPPriceChangeAction):
+    existing = await price_change_collection.find_one({"ID": int(change_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Price change not found")
+
+    now = datetime.utcnow()
+    remarks = str(payload.remarks or "").strip()
+    update_fields = {
+        "Status": "Approved",
+        "ApprovedAt": now,
+        "LastUpdated": now,
+    }
+    if str(payload.user or "").strip():
+        update_fields["User"] = str(payload.user).strip()
+    if remarks:
+        update_fields["Remarks"] = remarks
+
+    await price_change_collection.update_one({"_id": existing["_id"]}, {"$set": update_fields})
+    updated = await price_change_collection.find_one({"_id": existing["_id"]})
+
+    effect_date = parse_price_change_datetime(updated.get("EffectDate"))
+    if effect_date is None or effect_date <= now:
+        updated, _ = await apply_price_change_document(updated, applied_at=now)
+
+    return map_price_change_for_erp(updated)
+
+
+@app.post("/erp/price-changes/{change_id}/apply", response_model=ERPPriceChangeOut)
+async def apply_erp_price_change(change_id: int, payload: ERPPriceChangeAction):
+    existing = await price_change_collection.find_one({"ID": int(change_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Price change not found")
+    if not existing.get("Items"):
+        raise HTTPException(status_code=400, detail="This price change has no items to apply")
+
+    now = datetime.utcnow()
+    update_fields = {
+        "Status": "Approved",
+        "ApprovedAt": parse_price_change_datetime(existing.get("ApprovedAt")) or now,
+        "EffectDate": now,
+        "LastUpdated": now,
+    }
+    if str(payload.user or "").strip():
+        update_fields["User"] = str(payload.user).strip()
+    if str(payload.remarks or "").strip():
+        update_fields["Remarks"] = str(payload.remarks).strip()
+
+    await price_change_collection.update_one({"_id": existing["_id"]}, {"$set": update_fields})
+    refreshed = await price_change_collection.find_one({"_id": existing["_id"]})
+    applied, _ = await apply_price_change_document(refreshed, applied_at=now)
+    return map_price_change_for_erp(applied)
+
+
+@app.post("/erp/price-changes/{change_id}/cancel", response_model=ERPPriceChangeOut)
+async def cancel_erp_price_change(change_id: int, payload: ERPPriceChangeAction):
+    existing = await price_change_collection.find_one({"ID": int(change_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Price change not found")
+    if normalize_price_change_status(existing.get("Status")) == "Applied":
+        raise HTTPException(status_code=409, detail="Applied price changes cannot be cancelled")
+
+    now = datetime.utcnow()
+    update_fields = {
+        "Status": "Cancelled",
+        "LastUpdated": now,
+    }
+    if str(payload.user or "").strip():
+        update_fields["User"] = str(payload.user).strip()
+    if str(payload.remarks or "").strip():
+        update_fields["Remarks"] = str(payload.remarks).strip()
+
+    await price_change_collection.update_one({"_id": existing["_id"]}, {"$set": update_fields})
+    cancelled = await price_change_collection.find_one({"_id": existing["_id"]})
+    return map_price_change_for_erp(cancelled)
 
 
 @app.get("/erp/users", response_model=List[ERPUserOut])

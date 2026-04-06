@@ -3,12 +3,12 @@ import { Fingerprint, KeyRound, RefreshCw } from "lucide-react";
 
 const APP_COPY = {
   pos: {
-    title: "Eastmatt POS",
+    title: "ParhelionPOS",
     subtitle: "Cashier sign-in",
     description: "Authenticate before opening the register and processing sales.",
   },
   erp: {
-    title: "Eastmatt ERP",
+    title: "ParhelionERP",
     subtitle: "Workspace sign-in",
     description: "Authenticate before opening the enterprise management workspace.",
   },

@@ -5,7 +5,7 @@ const path = require("path");
 const projectRoot = path.resolve(__dirname, "..");
 const distDir = path.join(projectRoot, "dist");
 const unpackedDir = path.join(distDir, "win-unpacked");
-const portableRoot = path.join(distDir, "Eastmatt-Portable-Apps");
+const portableRoot = path.join(distDir, "Parhelion-Portable-Apps");
 const posOutputDir = path.join(portableRoot, "POS");
 const erpOutputDir = path.join(portableRoot, "ERP");
 
@@ -47,17 +47,17 @@ function createReadme() {
   writeTextFile(
     readmePath,
     [
-      "Eastmatt Portable Apps",
-      "======================",
+      "Parhelion Portable Apps",
+      "=======================",
       "",
       "This folder contains portable desktop builds for both apps.",
       "",
       "Folders:",
-      "- POS\\Eastmatt POS.exe",
-      "- ERP\\Eastmatt ERP.exe",
+      "- POS\\ParhelionPOS.exe",
+      "- ERP\\ParhelionERP.exe",
       "",
       "How to use:",
-      "1. Copy the whole 'Eastmatt-Portable-Apps' folder to the destination PC.",
+      "1. Copy the whole 'Parhelion-Portable-Apps' folder to the destination PC.",
       "2. You can place it in Program Files, Program Files (x86), or any writable folder.",
       "3. Open the POS or ERP subfolder and run the .exe directly, or use the launcher .cmd files in this root folder.",
       "4. If you want Desktop shortcuts, create shortcuts to 'Launch POS.cmd' and 'Launch ERP.cmd' after copying the folder.",
@@ -84,8 +84,8 @@ function main() {
   runNpmScript("package:erp");
   copyUnpackedApp(erpOutputDir);
 
-  createLauncherScript(path.join(portableRoot, "Launch POS.cmd"), "POS\\Eastmatt POS.exe");
-  createLauncherScript(path.join(portableRoot, "Launch ERP.cmd"), "ERP\\Eastmatt ERP.exe");
+  createLauncherScript(path.join(portableRoot, "Launch POS.cmd"), "POS\\ParhelionPOS.exe");
+  createLauncherScript(path.join(portableRoot, "Launch ERP.cmd"), "ERP\\ParhelionERP.exe");
   createReadme();
 
   console.log(`Portable apps created at ${portableRoot}`);

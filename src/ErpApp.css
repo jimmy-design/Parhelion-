@@ -424,6 +424,13 @@
   padding-bottom: 0;
 }
 
+.erp-content.is-workspace-view .erp-panels {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .erp-content.is-dashboard-view .erp-panels {
   flex: 1;
   min-height: 0;
@@ -438,6 +445,12 @@
 .erp-content.is-workspace-view .erp-panel,
 .erp-content.is-workspace-view .erp-panel-large {
   min-height: 0;
+}
+
+.erp-content.is-workspace-view .erp-panel,
+.erp-content.is-workspace-view .erp-panel-large {
+  flex: 1 1 auto;
+  height: 100%;
 }
 
 .erp-alerts {
@@ -1300,7 +1313,7 @@
   flex-direction: column;
   gap: 12px;
   flex: 1;
-  height: auto;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -1310,6 +1323,8 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  align-items: stretch;
   overflow: hidden;
 }
 
@@ -1319,6 +1334,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   gap: 10px;
   overflow: hidden;
 }
@@ -1498,6 +1514,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
   position: relative;
   -ms-overflow-style: none;
@@ -1809,6 +1826,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1987,6 +2005,247 @@
 }
 
 .erp-supplier-details-empty .erp-mini-btn {
+  align-self: flex-start;
+}
+
+.erp-price-change-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(360px, 0.95fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.erp-price-change-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.erp-price-change-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.erp-price-change-summary-card,
+.erp-price-change-detail-card,
+.erp-price-change-delta-card {
+  padding: 14px 15px;
+  border-radius: 16px;
+  border: 1px solid rgba(214, 223, 236, 0.92);
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.erp-price-change-summary-card span,
+.erp-price-change-delta-card span {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6f829f;
+}
+
+.erp-price-change-summary-card strong,
+.erp-price-change-detail-card strong,
+.erp-price-change-delta-card strong {
+  display: block;
+  margin-top: 8px;
+  color: #21324e;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.erp-price-change-summary-card p,
+.erp-price-change-delta-card small {
+  margin: 8px 0 0;
+  color: #5e718e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.erp-price-change-panel {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(214, 223, 236, 0.92);
+  background: linear-gradient(180deg, rgba(249, 252, 255, 0.96), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 14px 32px rgba(59, 79, 115, 0.08);
+  overflow: hidden;
+}
+
+.erp-price-change-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.erp-price-change-panel-header h3,
+.erp-price-change-empty-state h4 {
+  margin: 6px 0 4px;
+  color: #1f2b44;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.erp-price-change-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.erp-price-change-form-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  padding-right: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.erp-price-change-form-grid,
+.erp-price-change-price-grid,
+.erp-price-change-meta-grid,
+.erp-price-change-detail-grid,
+.erp-price-change-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.erp-price-change-price-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.erp-price-change-select {
+  height: 36px;
+  border: 1px solid rgba(114, 135, 164, 0.68);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: rgba(244, 247, 251, 0.96);
+  color: #203247;
+  font-size: 12px;
+  outline: none;
+}
+
+.erp-price-change-select:focus {
+  border-color: rgba(84, 122, 196, 0.75);
+  box-shadow: 0 0 0 2px rgba(80, 121, 198, 0.14);
+}
+
+.erp-price-change-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(214, 223, 236, 0.9);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.erp-price-change-toggle-grid.is-compact {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.erp-price-change-item-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.erp-price-change-item-toolbar .erp-search-input-group {
+  flex: 1;
+}
+
+.erp-price-change-lines,
+.erp-price-change-detail-lines-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.erp-price-change-line-card,
+.erp-price-change-detail-line {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(214, 223, 236, 0.92);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.erp-price-change-line-header,
+.erp-price-change-detail-line-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.erp-price-change-line-header strong,
+.erp-price-change-detail-line-head strong {
+  color: #1f2b44;
+}
+
+.erp-price-change-line-header p,
+.erp-price-change-detail-line-head p,
+.erp-price-change-schedule-text,
+.erp-price-change-empty-state p {
+  margin: 4px 0 0;
+  color: #60728f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.erp-price-change-old-value {
+  display: block;
+  margin-top: 4px;
+  color: #7588a8;
+  font-size: 11px;
+}
+
+.erp-price-change-detail-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.erp-price-change-detail-lines h4 {
+  margin: 0;
+  color: #24324f;
+  font-size: 13px;
+}
+
+.erp-price-change-delta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.erp-price-change-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.erp-price-change-empty-state .erp-mini-btn {
   align-self: flex-start;
 }
 
@@ -3723,6 +3982,23 @@
 
   .erp-search-actions {
     flex-wrap: wrap;
+  }
+
+  .erp-price-change-layout,
+  .erp-price-change-summary-grid,
+  .erp-price-change-form-grid,
+  .erp-price-change-price-grid,
+  .erp-price-change-meta-grid,
+  .erp-price-change-detail-grid,
+  .erp-price-change-action-grid,
+  .erp-price-change-toggle-grid,
+  .erp-price-change-delta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .erp-price-change-item-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .erp-category-sales-header {
