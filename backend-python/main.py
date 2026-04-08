@@ -871,20 +871,41 @@ async def find_erp_item_by_lookup_or_id(lookup_code: str):
     if not normalized:
         return None
 
-    item = await item_collection.find_one({"ItemLookupCode": normalized})
+    item = await item_collection.find_one(
+        {
+            "$or": [
+                {"ItemLookupCode": normalized},
+                {"Alias": normalized},
+                {"alias": normalized},
+                {"Barcode": normalized},
+            ]
+        }
+    )
     if item:
         return item
 
     if normalized.isdigit():
         numeric_value = int(normalized)
 
-        item = await item_collection.find_one({"ItemLookupCode": numeric_value})
+        item = await item_collection.find_one(
+            {"$or": [{"ItemLookupCode": numeric_value}, {"ItemID": numeric_value}]}
+        )
         if item:
             return item
 
-        item = await item_collection.find_one({"ItemID": numeric_value})
-        if item:
-            return item
+    escaped_lookup = re.escape(normalized)
+    item = await item_collection.find_one(
+        {
+            "$or": [
+                {"ItemLookupCode": {"$regex": f"^{escaped_lookup}$", "$options": "i"}},
+                {"Alias": {"$regex": f"^{escaped_lookup}$", "$options": "i"}},
+                {"alias": {"$regex": f"^{escaped_lookup}$", "$options": "i"}},
+                {"Barcode": {"$regex": f"^{escaped_lookup}$", "$options": "i"}},
+            ]
+        }
+    )
+    if item:
+        return item
 
     return None
 
@@ -1543,15 +1564,7 @@ async def read_root():
 async def get_item(code: str):
     """Fetch item details from DB."""
     await ensure_price_change_updates_synced()
-    item = await item_collection.find_one(
-        {
-            "$or": [
-                {"ItemLookupCode": code},
-                {"Alias": code},
-                {"alias": code},
-            ]
-        }
-    )
+    item = await find_erp_item_by_lookup_or_id(code)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     stock_available = get_item_stock_quantity(item)

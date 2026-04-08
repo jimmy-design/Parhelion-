@@ -13,6 +13,9 @@ module.exports = {
     artifactName: "pos-${version}.${ext}",
   },
   nsis: {
+    installerIcon: "icon.ico",
+    uninstallerIcon: "icon.ico",
+    installerHeaderIcon: "icon.ico",
     oneClick: false,
     perMachine: false,
   },

@@ -684,13 +684,22 @@ async function authenticateWithFingerprint(options = {}) {
   };
 }
 
+function getWindowsAppId(appVariant) {
+  return appVariant === "erp" ? "com.eastmatt.erp" : "com.eastmatt.pos";
+}
+
 function getWindowIconPath() {
+  const bundledAssetRoot = process.resourcesPath
+    ? path.join(process.resourcesPath, "assets")
+    : null;
+  const developmentAssetRoot = path.join(__dirname, "..", "assets");
+  const assetRoots = [bundledAssetRoot, developmentAssetRoot].filter(Boolean);
   const candidates = process.platform === "win32"
-    ? [
-        path.join(__dirname, "..", "assets", "icon.ico"),
-        path.join(__dirname, "..", "assets", "icon.png"),
-      ]
-    : [path.join(__dirname, "..", "assets", "icon.png")];
+    ? assetRoots.flatMap((assetRoot) => [
+        path.join(assetRoot, "icon.ico"),
+        path.join(assetRoot, "icon.png"),
+      ])
+    : assetRoots.map((assetRoot) => path.join(assetRoot, "icon.png"));
 
   return candidates.find((iconPath) => {
     if (!fs.existsSync(iconPath)) return false;
@@ -844,6 +853,10 @@ function bootstrap(appVariant) {
 
   app.whenReady().then(async () => {
     try {
+      if (process.platform === "win32") {
+        app.setAppUserModelId(getWindowsAppId(appVariant));
+      }
+
       if (appVariant === "erp") {
         Menu.setApplicationMenu(null);
       }

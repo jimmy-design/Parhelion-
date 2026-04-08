@@ -261,12 +261,9 @@ function buildPriceChangeLineFromItem(item) {
 }
 
 function createEmptyPriceChangeForm(user = "") {
-  const nextDate = new Date();
-  nextDate.setHours(nextDate.getHours() + 1);
-
   return {
     description: "",
-    effectDate: formatLocalDateTimeValue(nextDate),
+    effectDate: "",
     type: "0",
     storeId: "1",
     purchaseOrderId: "",
@@ -1079,6 +1076,21 @@ async function fetchJsonWithFallback(pathWithQuery, options, defaultErrorMessage
   throw lastError || new Error(defaultErrorMessage);
 }
 
+function getPriceChangeErrorMessage(error, fallbackMessage) {
+  const rawMessage = String(error?.message || fallbackMessage || "").trim();
+  const normalized = rawMessage.toLowerCase();
+
+  if (normalized === "not found") {
+    return "Price Change routes were not found on the server. Update backend-python on the server and restart it, then reload ERP.";
+  }
+
+  if (normalized === "price change not found") {
+    return "This price change no longer exists on the server. Reload the list and try again.";
+  }
+
+  return rawMessage || fallbackMessage;
+}
+
 async function fetchDashboardJson(pathWithQuery) {
   return fetchJsonWithFallback(pathWithQuery, undefined, "Failed to load dashboard data");
 }
@@ -1333,7 +1345,13 @@ function ErpApp({ currentUser, onLogout }) {
         hint: "Review, approve, and schedule item price updates.",
         icon: DollarSign,
         tone: "tone-categories",
-        actions: ["New Change", "Approve Prices"],
+        actions: [
+          "New Change",
+          "Edit Change",
+          "Approve Prices",
+          "Apply Now",
+          "Cancel Change",
+        ],
       },
     ],
     []
@@ -2391,7 +2409,8 @@ function ErpApp({ currentUser, onLogout }) {
       );
       setPriceChangesRecords(Array.isArray(data) ? data : []);
     } catch (error) {
-      const message = error.message || "Failed to load price changes";
+      const message = getPriceChangeErrorMessage(error, "Failed to load price changes");
+      setPriceChangesRecords([]);
       setPriceChangesError(message);
     } finally {
       setPriceChangesLoading(false);
@@ -2438,16 +2457,17 @@ function ErpApp({ currentUser, onLogout }) {
   const handleSavePriceChange = async (event) => {
     event.preventDefault();
 
-    const description = newPriceChangeForm.description.trim();
-    if (!description) {
-      pushAlert("warning", "Description is required.");
-      return;
-    }
-
     if (!newPriceChangeForm.items.length) {
       pushAlert("warning", "Add at least one item to this price change.");
       return;
     }
+
+    const firstItem = newPriceChangeForm.items[0];
+    const description =
+      newPriceChangeForm.description.trim() ||
+      firstItem?.description?.trim() ||
+      firstItem?.itemLookupCode?.trim() ||
+      "Price change";
 
     const payload = {
       description,
@@ -2535,7 +2555,7 @@ function ErpApp({ currentUser, onLogout }) {
           : "Price change created successfully."
       );
     } catch (error) {
-      pushAlert("error", error.message || "Failed to save price change");
+      pushAlert("error", getPriceChangeErrorMessage(error, "Failed to save price change"));
     } finally {
       setSavingPriceChange(false);
     }
@@ -2579,7 +2599,10 @@ function ErpApp({ currentUser, onLogout }) {
           : "Price change approved successfully."
       );
     } catch (error) {
-      pushAlert("error", error.message || "Failed to approve price change");
+      pushAlert(
+        "error",
+        getPriceChangeErrorMessage(error, "Failed to approve price change")
+      );
     } finally {
       setPriceChangeActionPending(false);
     }
@@ -2608,7 +2631,7 @@ function ErpApp({ currentUser, onLogout }) {
       await loadPriceChanges(searchTerm);
       pushAlert("success", "Price change applied successfully.");
     } catch (error) {
-      pushAlert("error", error.message || "Failed to apply price change");
+      pushAlert("error", getPriceChangeErrorMessage(error, "Failed to apply price change"));
     } finally {
       setPriceChangeActionPending(false);
     }
@@ -2638,7 +2661,7 @@ function ErpApp({ currentUser, onLogout }) {
       await loadPriceChanges(searchTerm);
       pushAlert("success", "Price change cancelled.");
     } catch (error) {
-      pushAlert("error", error.message || "Failed to cancel price change");
+      pushAlert("error", getPriceChangeErrorMessage(error, "Failed to cancel price change"));
     } finally {
       setPriceChangeActionPending(false);
     }
@@ -2665,8 +2688,20 @@ function ErpApp({ currentUser, onLogout }) {
         openCreatePriceChangeComposer();
         return;
       }
+      if (actionLabel === "Edit Change") {
+        openEditPriceChangeComposer();
+        return;
+      }
       if (actionLabel === "Approve Prices") {
         handleApproveSelectedPriceChange();
+        return;
+      }
+      if (actionLabel === "Apply Now") {
+        handleApplySelectedPriceChange();
+        return;
+      }
+      if (actionLabel === "Cancel Change") {
+        handleCancelSelectedPriceChange();
         return;
       }
     }
@@ -4627,7 +4662,7 @@ function ErpApp({ currentUser, onLogout }) {
                               actionLabel === "Properties" &&
                               !selectedInventoryItemRecord) ||
                             (isPriceChangeView &&
-                              actionLabel === "Approve Prices" &&
+                              ["Edit Change", "Approve Prices", "Apply Now", "Cancel Change"].includes(actionLabel) &&
                               !selectedPriceChangeRecord)
                           }
                         >
@@ -4670,6 +4705,15 @@ function ErpApp({ currentUser, onLogout }) {
                     onOpenCreate={openCreatePriceChangeComposer}
                     onOpenEdit={openEditPriceChangeComposer}
                     onCloseComposer={closePriceChangeComposer}
+                    onImport={() =>
+                      pushAlert("info", "Price change import flow is ready for the next pass.")
+                    }
+                    onOpenHistory={() =>
+                      pushAlert("info", "Price change history view is ready for the next pass.")
+                    }
+                    onOpenLogs={() =>
+                      pushAlert("info", "Price change logs panel is ready for the next pass.")
+                    }
                     form={newPriceChangeForm}
                     onFormChange={updatePriceChangeForm}
                     onItemFieldChange={updatePriceChangeItemField}
