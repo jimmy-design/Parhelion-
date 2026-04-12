@@ -579,9 +579,9 @@ export default function PriceChangeWorkspace({
                         <th>Barcode</th>
                         <th className="erp-price-change-history-code-col">Code</th>
                         <th className="erp-price-change-history-effect-col">Effect Date</th>
-                        <th>Price</th>
-                        <th>Cost</th>
-                        <th>Sale Price</th>
+                        <th className="erp-price-change-history-money-col">Price</th>
+                        <th className="erp-price-change-history-money-col">Cost</th>
+                        <th className="erp-price-change-history-money-col">Sale Price</th>
                         <th className="erp-price-change-history-user-col">User</th>
                       </tr>
                     </thead>
@@ -598,9 +598,15 @@ export default function PriceChangeWorkspace({
                             <td className="erp-price-change-history-effect-col">
                               {formatHistoryDateTime(row.effect_date)}
                             </td>
-                            <td>{formatPriceValue(row.price)}</td>
-                            <td>{formatPriceValue(row.cost)}</td>
-                            <td>{formatPriceValue(row.sale_price)}</td>
+                            <td className="erp-price-change-history-money-col">
+                              {formatPriceValue(row.price)}
+                            </td>
+                            <td className="erp-price-change-history-money-col">
+                              {formatPriceValue(row.cost)}
+                            </td>
+                            <td className="erp-price-change-history-money-col">
+                              {formatPriceValue(row.sale_price)}
+                            </td>
                             <td className="erp-price-change-history-user-col">
                               {row.user || "--"}
                             </td>

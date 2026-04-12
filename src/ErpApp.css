@@ -2436,9 +2436,15 @@
   min-width: 190px;
 }
 
-.erp-price-change-history-table td:nth-child(4),
-.erp-price-change-history-table td:nth-child(5),
-.erp-price-change-history-table td:nth-child(6) {
+.erp-price-change-history-money-col {
+  width: 108px;
+  min-width: 108px;
+  max-width: 108px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-price-change-history-table td.erp-price-change-history-money-col {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
