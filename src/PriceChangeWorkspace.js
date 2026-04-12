@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, X } from "lucide-react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 
 function formatDateTime(value) {
   if (!value) return "Immediate";
@@ -12,6 +12,111 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
 
+function formatPriceValue(value) {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function PriceChangeBranchSelect({
+  id,
+  value,
+  options,
+  onChange,
+  placeholder = "Select branch",
+  disabled = false,
+}) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const containerRef = React.useRef(null);
+  const listboxIdRef = React.useRef(
+    `erp-price-change-branch-select-${Math.random().toString(36).slice(2, 10)}`
+  );
+
+  const selectedOption =
+    (Array.isArray(options) ? options : []).find(
+      (option) => String(option.value) === String(value)
+    ) || null;
+  const hasOptions = Array.isArray(options) && options.length > 0;
+  const isDisabled = disabled || !hasOptions;
+
+  React.useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!containerRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`erp-custom-select erp-price-change-branch-select ${isOpen ? "is-open" : ""} ${
+        isDisabled ? "is-disabled" : ""
+      }`.trim()}
+    >
+      <button
+        id={id}
+        type="button"
+        className="erp-custom-select-trigger"
+        onClick={() => {
+          if (!isDisabled) {
+            setIsOpen((prev) => !prev);
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-controls={listboxIdRef.current}
+        disabled={isDisabled}
+      >
+        <span className="erp-custom-select-value">
+          {selectedOption?.shortLabel || selectedOption?.label || placeholder}
+        </span>
+        <ChevronDown size={18} className="erp-custom-select-icon" />
+      </button>
+      {isOpen && (
+        <div className="erp-custom-select-menu" id={listboxIdRef.current} role="listbox">
+          {(Array.isArray(options) ? options : []).map((option) => {
+            const isSelected = String(option.value) === String(value);
+            return (
+              <button
+                key={`${listboxIdRef.current}-${option.value}`}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className={`erp-custom-select-option ${isSelected ? "is-selected" : ""}`.trim()}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+              >
+                <span>{option.shortLabel || option.label}</span>
+                {isSelected && <Check size={16} className="erp-custom-select-check" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PriceChangeWorkspace({
   records,
   totalRecords,
@@ -21,8 +126,18 @@ export default function PriceChangeWorkspace({
   onCloseComposer,
   onImport,
   onOpenHistory,
+  showHistoryModal,
+  historyRows,
+  historyLoading,
+  historyError,
+  historyLookupCode,
+  onCloseHistory,
   onOpenLogs,
   form,
+  branchOptions,
+  branchPlaceholder,
+  branchUnavailable,
+  branchSelectionPending,
   onFormChange,
   onItemFieldChange,
   onItemPriceChange,
@@ -47,6 +162,7 @@ export default function PriceChangeWorkspace({
 }) {
   const isComposerMode = composerMode === "create" || composerMode === "edit";
   const composerScrollRef = React.useRef(null);
+  const resolvedBranchOptions = Array.isArray(branchOptions) ? branchOptions : [];
 
   React.useLayoutEffect(() => {
     if (isComposerMode && composerScrollRef.current) {
@@ -210,6 +326,7 @@ export default function PriceChangeWorkspace({
                       className="erp-search-input"
                       type="text"
                       value={lookupValue}
+                      disabled={branchSelectionPending}
                       onChange={(event) => onLookupValueChange(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
@@ -218,6 +335,17 @@ export default function PriceChangeWorkspace({
                         }
                       }}
                       placeholder="Scan or enter item code to add a pricing line..."
+                    />
+                  </div>
+                  <div className="erp-form-field erp-price-change-toolbar-branch">
+                    <label htmlFor="price-change-branch-target">Branch</label>
+                    <PriceChangeBranchSelect
+                      id="price-change-branch-target"
+                      value={String(form.storeId ?? "0")}
+                      options={resolvedBranchOptions}
+                      placeholder={branchPlaceholder}
+                      disabled={branchSelectionPending || branchUnavailable}
+                      onChange={(nextValue) => onFormChange("storeId", nextValue)}
                     />
                   </div>
                   <div className="erp-price-change-toolbar-actions">
@@ -232,9 +360,15 @@ export default function PriceChangeWorkspace({
                       type="button"
                       className="erp-mini-btn erp-mini-btn-primary"
                       onClick={onAddItem}
-                      disabled={lookupPending}
+                      disabled={lookupPending || branchSelectionPending || branchUnavailable}
                     >
-                      {lookupPending ? "Adding..." : "Add Item"}
+                      {branchUnavailable
+                        ? "Load Branches"
+                        : branchSelectionPending
+                        ? "Refreshing..."
+                        : lookupPending
+                          ? "Adding..."
+                          : "Add Item"}
                     </button>
                   </div>
                 </div>
@@ -288,7 +422,7 @@ export default function PriceChangeWorkspace({
                             <div className="erp-form-field">
                               <label>Sale Start</label>
                               <input
-                                type="datetime-local"
+                                type="date"
                                 value={item.saleStart}
                                 onChange={(event) =>
                                   onItemFieldChange(item.rowId, "saleStart", event.target.value)
@@ -298,7 +432,7 @@ export default function PriceChangeWorkspace({
                             <div className="erp-form-field">
                               <label>Sale End</label>
                               <input
-                                type="datetime-local"
+                                type="date"
                                 value={item.saleEnd}
                                 onChange={(event) =>
                                   onItemFieldChange(item.rowId, "saleEnd", event.target.value)
@@ -370,21 +504,113 @@ export default function PriceChangeWorkspace({
                   Price Change Logs
                 </button>
                 <button
-                  type="button"
-                  className="erp-footer-btn erp-footer-btn-secondary"
-                  onClick={onCloseComposer}
-                >
-                  Cancel
-                </button>
-                <button
                   type="submit"
                   className="erp-footer-btn erp-footer-btn-primary"
-                  disabled={saving}
+                  disabled={saving || branchSelectionPending || branchUnavailable}
                 >
-                  {saving ? "Saving..." : "Save Price Change"}
+                  {saving
+                    ? "Saving..."
+                    : branchUnavailable
+                      ? "Load Branches First"
+                      : branchSelectionPending
+                      ? "Refreshing Branch..."
+                      : "Save Price Change"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showHistoryModal && (
+        <div
+          className="erp-modal-overlay erp-price-change-history-overlay"
+          onClick={onCloseHistory}
+        >
+          <div
+            className="erp-modal-card erp-price-change-history-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="erp-modal-header">
+              <div className="erp-price-change-modal-title">
+                <p className="erp-supplier-details-eyebrow">Price Change</p>
+                <h3>Price Change History</h3>
+                {historyLookupCode && (
+                  <p className="erp-price-change-history-target">
+                    Lookup code: {historyLookupCode}
+                  </p>
+                )}
+              </div>
+              <div className="erp-window-controls">
+                <button
+                  type="button"
+                  className="erp-window-btn erp-window-btn-close"
+                  onClick={onCloseHistory}
+                  aria-label="Close price change history"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+
+            <div className="erp-price-change-history-content">
+              {historyLoading ? (
+                <p className="erp-table-status">Loading price change history...</p>
+              ) : historyError ? (
+                <p className="erp-table-status erp-table-status-error">{historyError}</p>
+              ) : (
+                <div className="erp-price-change-history-table-wrap">
+                  <table className="erp-data-table erp-price-change-history-table">
+                    <thead>
+                      <tr>
+                        <th>Barcode</th>
+                        <th>Code</th>
+                        <th>Item Lookup Code</th>
+                        <th>Effect Date</th>
+                        <th>Price</th>
+                        <th>Cost</th>
+                        <th>Sale Price</th>
+                        <th>User</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyRows.length ? (
+                        historyRows.map((row, rowIndex) => (
+                          <tr
+                            key={`price-change-history-${row.item_lookup_code}-${row.effect_date || "immediate"}-${rowIndex}`}
+                          >
+                            <td>{row.barcode || "--"}</td>
+                            <td>{row.code || "--"}</td>
+                            <td>{row.item_lookup_code || "--"}</td>
+                            <td>{formatDateTime(row.effect_date)}</td>
+                            <td>{formatPriceValue(row.price)}</td>
+                            <td>{formatPriceValue(row.cost)}</td>
+                            <td>{formatPriceValue(row.sale_price)}</td>
+                            <td>{row.user || "--"}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="8" className="erp-table-empty">
+                            No price change history found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="erp-modal-actions">
+              <button
+                type="button"
+                className="erp-footer-btn erp-footer-btn-secondary"
+                onClick={onCloseHistory}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

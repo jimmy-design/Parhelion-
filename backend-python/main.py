@@ -2,13 +2,21 @@
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from bson import ObjectId
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from datetime import date, datetime, timedelta, timezone
 import logging
+import os
 import re
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.8 fallback
+    ZoneInfo = None
 
 from database.mongodb import (
+    db,
+    branch_db,
     item_collection,
     tender_collection,
     transaction_collection,
@@ -22,6 +30,10 @@ from database.mongodb import (
     purchase_order_collection,
     purchase_order_entries_collection,
     price_change_collection,
+    branch_collection,
+    BRANCH_COLLECTION_CANDIDATES,
+    get_store_collection,
+    get_store_database_name,
 )
 from utils.printer import POSPrinter
 from utils.receipt_formatter import generate_plain_receipt
@@ -163,6 +175,19 @@ class ERPUserUpdate(BaseModel):
     floor_limit: float = 0
     drop_limit: float = 0
     enabled: bool = True
+
+
+class ERPBranchOut(BaseModel):
+    store_id: int
+    code: str
+    name: str
+    region: str = ""
+    address1: str = ""
+    city: str = ""
+    phone_number: str = ""
+    parent_store_id: int = 0
+    database_name: str
+    last_updated: Optional[datetime] = None
 
 
 class ERPCategoryCreate(BaseModel):
@@ -452,7 +477,7 @@ class ERPPriceChangeCreate(BaseModel):
     effect_date: Optional[str] = None
     type: int = 0
     description: str
-    store_id: int = 1
+    store_id: int = 0
     purchase_order_id: Optional[int] = None
     status: str = "Open"
     user: str = ""
@@ -492,13 +517,24 @@ class ERPPriceChangeItemOut(BaseModel):
     time_end: Optional[str] = None
 
 
+class ERPPriceChangeHistoryRow(BaseModel):
+    barcode: str = ""
+    code: str = ""
+    item_lookup_code: str
+    effect_date: Optional[datetime] = None
+    price: float = 0.0
+    cost: float = 0.0
+    sale_price: float = 0.0
+    user: str = ""
+
+
 class ERPPriceChangeOut(BaseModel):
     id: int
     time: datetime
     effect_date: Optional[datetime] = None
     type: int = 0
     description: str
-    store_id: int = 1
+    store_id: int = 0
     total_items: int = 0
     purchase_order_id: Optional[int] = None
     status: str = "Open"
@@ -519,7 +555,30 @@ class ERPPriceChangeOut(BaseModel):
 
 PRICE_CHANGE_STATUSES = {"Draft", "Open", "Approved", "Applied", "Cancelled"}
 PRICE_CHANGE_SYNC_INTERVAL_SECONDS = 5
+_erp_branch_collection_name_cache: Optional[str] = None
 _last_price_change_sync_at: Optional[datetime] = None
+PRICE_CHANGE_NUMBER_EPSILON = 0.0001
+
+
+def get_price_change_business_timezone():
+    configured_timezone = str(os.getenv("PRICE_CHANGE_TIMEZONE", "") or "").strip()
+    if configured_timezone and ZoneInfo is not None:
+        try:
+            return ZoneInfo(configured_timezone)
+        except Exception:
+            logging.warning(
+                "Invalid PRICE_CHANGE_TIMEZONE '%s'. Falling back to the machine local timezone.",
+                configured_timezone,
+            )
+    elif configured_timezone:
+        logging.warning(
+            "PRICE_CHANGE_TIMEZONE is set but zoneinfo is unavailable. Falling back to the machine local timezone."
+        )
+
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+PRICE_CHANGE_BUSINESS_TIMEZONE = get_price_change_business_timezone()
 
 
 def parse_price_change_datetime(value) -> Optional[datetime]:
@@ -545,6 +604,176 @@ def normalize_price_change_status(value: str) -> str:
     return normalized if normalized in PRICE_CHANGE_STATUSES else "Open"
 
 
+def normalize_price_change_day_boundary(value, boundary: str = "start") -> Optional[datetime]:
+    text = str(value or "").strip()
+    parsed_date = None
+    if text:
+        try:
+            parsed_date = date.fromisoformat(text[:10])
+        except ValueError:
+            parsed_date = None
+
+    if parsed_date is None:
+        parsed = parse_price_change_datetime(value)
+        if parsed is None:
+            return None
+        parsed_date = parsed.date()
+
+    normalized = datetime.combine(
+        parsed_date,
+        datetime.min.time(),
+        tzinfo=PRICE_CHANGE_BUSINESS_TIMEZONE,
+    )
+    if boundary == "end":
+        normalized = normalized.replace(hour=23, minute=59, second=59, microsecond=0)
+    return normalized.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def parse_price_change_store_id(value, default: int = 0) -> int:
+    if value is None:
+        return int(default)
+
+    text = str(value).strip()
+    if not text:
+        return int(default)
+
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def format_erp_branch_name(store_id) -> str:
+    normalized_store_id = parse_price_change_store_id(store_id, default=0)
+    if normalized_store_id <= 0:
+        return "Default Database"
+    if normalized_store_id == 1:
+        return "Main Store"
+    return f"Branch {normalized_store_id}"
+
+
+def parse_branch_primary_incremental_value(doc: dict, fallback: int = 0) -> int:
+    for field_name in (
+        "BranchID",
+        "BranchNo",
+        "BranchNumber",
+        "StoreNumber",
+        "StoreNo",
+        "Sequence",
+        "Seq",
+        "PrimaryID",
+    ):
+        value = parse_price_change_store_id(doc.get(field_name), default=0)
+        if value > 0:
+            return value
+
+    return int(fallback)
+
+
+def get_branch_primary_sort_key(doc: dict):
+    primary_value = parse_branch_primary_incremental_value(doc, fallback=0)
+    if primary_value > 0:
+        return (0, primary_value)
+
+    raw_object_id = doc.get("_id")
+    if isinstance(raw_object_id, ObjectId):
+        return (1, str(raw_object_id))
+
+    return (2, str(doc.get("StoreCode", "") or ""), str(doc.get("Name", "") or ""))
+
+
+async def get_erp_branch_source_collection():
+    global _erp_branch_collection_name_cache
+
+    if _erp_branch_collection_name_cache:
+        return branch_db[_erp_branch_collection_name_cache]
+
+    collection_names = await branch_db.list_collection_names()
+    collection_names_by_casefold = {
+        str(collection_name).casefold(): collection_name
+        for collection_name in collection_names
+    }
+    for candidate_name in BRANCH_COLLECTION_CANDIDATES:
+        actual_collection_name = collection_names_by_casefold.get(str(candidate_name).casefold())
+        if actual_collection_name:
+            _erp_branch_collection_name_cache = actual_collection_name
+            return branch_db[actual_collection_name]
+
+    return branch_collection
+
+
+def map_erp_branch_for_output(doc: dict, store_id: int) -> ERPBranchOut:
+    branch_name = str(
+        doc.get("Name")
+        or doc.get("StoreName")
+        or doc.get("Description")
+        or format_erp_branch_name(store_id)
+        or ""
+    ).strip()
+    branch_code = str(
+        doc.get("StoreCode")
+        or doc.get("Code")
+        or doc.get("BranchCode")
+        or f"STORE-{store_id:02d}"
+    ).strip()
+
+    return ERPBranchOut(
+        store_id=store_id,
+        code=branch_code,
+        name=branch_name or format_erp_branch_name(store_id),
+        region=str(doc.get("Region", "") or "").strip(),
+        address1=str(doc.get("Address1", "") or "").strip(),
+        city=str(doc.get("City", "") or "").strip(),
+        phone_number=str(doc.get("PhoneNumber", doc.get("Phone", "")) or "").strip(),
+        parent_store_id=parse_price_change_store_id(doc.get("ParentStoreID", 0), default=0),
+        database_name=get_price_change_store_database_name(store_id),
+        last_updated=parse_optional_erp_datetime(doc.get("LastUpdated")),
+    )
+
+
+def get_price_change_store_database_name(store_id, default: int = 0) -> str:
+    normalized_store_id = parse_price_change_store_id(store_id, default=default)
+    return get_store_database_name(normalized_store_id)
+
+
+def get_price_change_item_collection(store_id, default: int = 0):
+    normalized_store_id = parse_price_change_store_id(store_id, default=default)
+    return get_store_collection("item", normalized_store_id)
+
+
+async def get_price_change_target_item_collections():
+    raw_store_ids = await price_change_collection.distinct("StoreID")
+    collections_by_database_name = {}
+
+    for raw_store_id in [0, 1, *raw_store_ids]:
+        database_name = get_price_change_store_database_name(raw_store_id)
+        if database_name in collections_by_database_name:
+            continue
+
+        collections_by_database_name[database_name] = get_price_change_item_collection(raw_store_id)
+
+    return list(collections_by_database_name.values())
+
+
+async def get_known_erp_branch_store_ids():
+    branch_source_collection = await get_erp_branch_source_collection()
+    branch_docs = await branch_source_collection.find({}, {"_id": 1}).to_list(2000)
+    sorted_branch_docs = sorted(branch_docs, key=get_branch_primary_sort_key)
+    store_ids = {index for index, _ in enumerate(sorted_branch_docs, start=1)}
+
+    for raw_store_id in await cashier_collection.distinct("StoreID"):
+        normalized_store_id = parse_price_change_store_id(raw_store_id, default=0)
+        if normalized_store_id > 0:
+            store_ids.add(normalized_store_id)
+
+    for raw_store_id in await price_change_collection.distinct("StoreID"):
+        normalized_store_id = parse_price_change_store_id(raw_store_id, default=0)
+        if normalized_store_id > 0:
+            store_ids.add(normalized_store_id)
+
+    return sorted(store_ids)
+
+
 def coerce_price_band(value: Optional[Dict[str, Any]], fallback: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
     source = value if isinstance(value, dict) else {}
     fallback_source = fallback if isinstance(fallback, dict) else {}
@@ -566,6 +795,56 @@ def coerce_price_band(value: Optional[Dict[str, Any]], fallback: Optional[Dict[s
         "lowerBound": read_number("lowerBound"),
         "upperBound": read_number("upperBound"),
     }
+
+
+def price_change_numbers_match(left_value, right_value) -> bool:
+    try:
+        normalized_left = float(left_value or 0)
+    except (TypeError, ValueError):
+        normalized_left = 0.0
+
+    try:
+        normalized_right = float(right_value or 0)
+    except (TypeError, ValueError):
+        normalized_right = 0.0
+
+    return abs(normalized_left - normalized_right) < PRICE_CHANGE_NUMBER_EPSILON
+
+
+def normalize_price_change_price_band(
+    next_price_band: Optional[Dict[str, Any]],
+    old_price_band: Optional[Dict[str, Any]] = None,
+    *,
+    sale_start: Optional[datetime] = None,
+    sale_end: Optional[datetime] = None,
+    time_based: bool = False,
+    loyalty_based: bool = False,
+) -> Dict[str, float]:
+    normalized_band = coerce_price_band(next_price_band, fallback=old_price_band)
+    previous_band = coerce_price_band(old_price_band)
+
+    has_sale_schedule = bool(
+        sale_start is not None
+        or sale_end is not None
+        or time_based
+        or loyalty_based
+    )
+    sale_was_explicitly_changed = not price_change_numbers_match(
+        normalized_band["sale"],
+        previous_band["sale"],
+    )
+    price_a_was_explicitly_changed = not price_change_numbers_match(
+        normalized_band["A"],
+        previous_band["A"],
+    )
+
+    if not has_sale_schedule and not sale_was_explicitly_changed:
+        normalized_band["sale"] = float(normalized_band["default"] or 0)
+
+    if not price_a_was_explicitly_changed:
+        normalized_band["A"] = float(normalized_band["sale"] or normalized_band["default"] or 0)
+
+    return normalized_band
 
 
 def build_item_price_band(doc: dict) -> Dict[str, float]:
@@ -632,7 +911,7 @@ def map_price_change_for_erp(doc: dict) -> ERPPriceChangeOut:
         effect_date=parse_price_change_datetime(doc.get("EffectDate")),
         type=int(doc.get("Type", 0) or 0),
         description=str(doc.get("Description", "") or ""),
-        store_id=int(doc.get("StoreID", 1) or 1),
+        store_id=parse_price_change_store_id(doc.get("StoreID"), default=0),
         total_items=int(doc.get("TotalItems", len(items)) or 0),
         purchase_order_id=int(doc.get("PurchaseOrderID", 0) or 0) or None,
         status=normalize_price_change_status(doc.get("Status", "Open")),
@@ -649,6 +928,37 @@ def map_price_change_for_erp(doc: dict) -> ERPPriceChangeOut:
         approved_at=parse_price_change_datetime(doc.get("ApprovedAt")),
         last_updated=parse_erp_datetime(doc.get("LastUpdated")),
         items=items,
+    )
+
+
+def map_price_change_history_row(
+    change_doc: dict,
+    item_doc: dict,
+    source_item: Optional[dict] = None,
+) -> ERPPriceChangeHistoryRow:
+    price_band = coerce_price_band(item_doc.get("Price"))
+
+    return ERPPriceChangeHistoryRow(
+        barcode=str(
+            (source_item or {}).get(
+                "Alias",
+                (source_item or {}).get("alias", (source_item or {}).get("Barcode", "")),
+            )
+            or ""
+        ),
+        code=str(
+            (source_item or {}).get(
+                "ItemID",
+                (source_item or {}).get("ID", item_doc.get("ID", "")),
+            )
+            or ""
+        ),
+        item_lookup_code=str(item_doc.get("ItemLookupCode", "") or ""),
+        effect_date=parse_price_change_datetime(change_doc.get("EffectDate")),
+        price=float(price_band.get("default", 0) or 0),
+        cost=float(price_band.get("cost", 0) or 0),
+        sale_price=float(price_band.get("sale", 0) or 0),
+        user=str(change_doc.get("User", "") or ""),
     )
 
 
@@ -866,12 +1176,14 @@ def get_item_stock_quantity(doc: dict) -> int:
     return int(doc.get("quantity", doc.get("Quantity", doc.get("StockAvailable", 0))) or 0)
 
 
-async def find_erp_item_by_lookup_or_id(lookup_code: str):
+async def find_erp_item_by_lookup_or_id(lookup_code: str, store_id: Optional[int] = None):
     normalized = str(lookup_code or "").strip()
     if not normalized:
         return None
 
-    item = await item_collection.find_one(
+    target_item_collection = get_price_change_item_collection(store_id)
+
+    item = await target_item_collection.find_one(
         {
             "$or": [
                 {"ItemLookupCode": normalized},
@@ -887,14 +1199,14 @@ async def find_erp_item_by_lookup_or_id(lookup_code: str):
     if normalized.isdigit():
         numeric_value = int(normalized)
 
-        item = await item_collection.find_one(
+        item = await target_item_collection.find_one(
             {"$or": [{"ItemLookupCode": numeric_value}, {"ItemID": numeric_value}]}
         )
         if item:
             return item
 
     escaped_lookup = re.escape(normalized)
-    item = await item_collection.find_one(
+    item = await target_item_collection.find_one(
         {
             "$or": [
                 {"ItemLookupCode": {"$regex": f"^{escaped_lookup}$", "$options": "i"}},
@@ -1061,16 +1373,33 @@ def parse_optional_erp_datetime(value) -> Optional[datetime]:
 def build_price_change_item_doc(
     payload: ERPPriceChangeItemCreate,
     source_item: Optional[dict] = None,
+    existing_price_change_item: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> dict:
     current_time = now or datetime.utcnow()
     source_price_band = build_item_price_band(source_item or {})
-    old_price_band = (
-        payload.old_price.dict()
-        if payload.old_price is not None
-        else source_price_band
+    old_price_band = coerce_price_band(
+        (
+            payload.old_price.dict()
+            if payload.old_price is not None
+            else (existing_price_change_item or {}).get("OldPrice")
+        ),
+        fallback=source_price_band,
     )
-    next_price_band = coerce_price_band(payload.price.dict(), fallback=old_price_band)
+    comparison_price_band = coerce_price_band(
+        (existing_price_change_item or {}).get("Price"),
+        fallback=old_price_band,
+    )
+    sale_start = normalize_price_change_day_boundary(payload.sale_start, boundary="start")
+    sale_end = normalize_price_change_day_boundary(payload.sale_end, boundary="end")
+    next_price_band = normalize_price_change_price_band(
+        payload.price.dict(),
+        comparison_price_band,
+        sale_start=sale_start,
+        sale_end=sale_end,
+        time_based=bool(payload.time_based),
+        loyalty_based=bool(payload.loyalty_based),
+    )
     item_identity = int(payload.id or (source_item or {}).get("ItemID", 0) or 0)
 
     return {
@@ -1085,8 +1414,8 @@ def build_price_change_item_doc(
         "Price": next_price_band,
         "OldPrice": coerce_price_band(old_price_band),
         "Quantity": float(payload.quantity or 0),
-        "SaleStart": parse_price_change_datetime(payload.sale_start),
-        "SaleEnd": parse_price_change_datetime(payload.sale_end),
+        "SaleStart": sale_start,
+        "SaleEnd": sale_end,
         "TimeBased": bool(payload.time_based),
         "LoyaltyBased": bool(payload.loyalty_based),
         "TimeStart": str(payload.time_start or "").strip(),
@@ -1112,7 +1441,7 @@ def build_price_change_doc(
         "EffectDate": parse_price_change_datetime(payload.effect_date),
         "Type": int(payload.type or 0),
         "Description": payload.description.strip(),
-        "StoreID": int(payload.store_id or 1),
+        "StoreID": parse_price_change_store_id(payload.store_id, default=0),
         "TotalItems": len(item_docs),
         "PurchaseOrderID": int(payload.purchase_order_id or 0),
         "Status": normalized_status,
@@ -1142,33 +1471,57 @@ async def apply_price_change_document(price_change_doc: dict, applied_at: Option
     current_time = applied_at or datetime.utcnow()
     current_doc = price_change_doc
     applied_lookup_codes = []
+    target_store_id = parse_price_change_store_id(current_doc.get("StoreID"), default=0)
+    target_item_collection = get_price_change_item_collection(target_store_id)
 
     for item_doc in current_doc.get("Items", []):
         lookup_code = str(item_doc.get("ItemLookupCode", "") or "").strip()
         if not lookup_code:
             continue
 
-        existing_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        existing_item = await find_erp_item_by_lookup_or_id(
+            lookup_code,
+            store_id=target_store_id,
+        )
         if not existing_item:
             continue
 
-        next_price_band = coerce_price_band(
-            item_doc.get("Price"),
+        old_price_band = coerce_price_band(
+            item_doc.get("OldPrice"),
             fallback=build_item_price_band(existing_item),
+        )
+        raw_next_price_band = coerce_price_band(
+            item_doc.get("Price"),
+            fallback=old_price_band,
         )
         sale_start = parse_price_change_datetime(item_doc.get("SaleStart"))
         sale_end = parse_price_change_datetime(item_doc.get("SaleEnd"))
+        price_a_was_explicitly_changed = not price_change_numbers_match(
+            raw_next_price_band["A"],
+            old_price_band["A"],
+        )
+        next_price_band = normalize_price_change_price_band(
+            raw_next_price_band,
+            old_price_band,
+            sale_start=sale_start,
+            sale_end=sale_end,
+            time_based=bool(item_doc.get("TimeBased", False)),
+            loyalty_based=bool(item_doc.get("LoyaltyBased", False)),
+        )
         default_price = float(next_price_band["default"] or 0)
         sale_price = float(next_price_band["sale"] or default_price)
+        price_a = float(next_price_band["A"] or sale_price)
 
         if sale_end and sale_end < current_time:
             sale_start = None
             sale_end = None
             sale_price = default_price
+            if not price_a_was_explicitly_changed:
+                price_a = default_price
 
         update_fields = {
             "Price": default_price,
-            "PriceA": float(next_price_band["A"] or sale_price),
+            "PriceA": price_a,
             "PriceB": float(next_price_band["B"] or 0),
             "PriceC": float(next_price_band["C"] or 0),
             "SalePrice": sale_price,
@@ -1181,7 +1534,7 @@ async def apply_price_change_document(price_change_doc: dict, applied_at: Option
             "LastUpdated": current_time,
         }
 
-        await item_collection.update_one(
+        await target_item_collection.update_one(
             {"_id": existing_item["_id"]},
             {"$set": update_fields},
         )
@@ -1204,34 +1557,46 @@ async def apply_price_change_document(price_change_doc: dict, applied_at: Option
 
 async def clear_expired_sale_prices(now: Optional[datetime] = None):
     current_time = now or datetime.utcnow()
-    sale_items = await item_collection.find(
-        {"SaleEndDate": {"$ne": None}},
-        {
-            "_id": 1,
-            "Price": 1,
-            "SalePrice": 1,
-            "SaleStartDate": 1,
-            "SaleEndDate": 1,
-        },
-    ).to_list(5000)
+    target_item_collections = await get_price_change_target_item_collections()
 
-    for item_doc in sale_items:
-        sale_end = parse_price_change_datetime(item_doc.get("SaleEndDate"))
-        if not sale_end or sale_end > current_time:
-            continue
-
-        default_price = float(item_doc.get("Price", 0) or 0)
-        await item_collection.update_one(
-            {"_id": item_doc["_id"]},
+    for target_item_collection in target_item_collections:
+        sale_items = await target_item_collection.find(
+            {"SaleEndDate": {"$ne": None}},
             {
-                "$set": {
-                    "SalePrice": default_price,
-                    "SaleStartDate": None,
-                    "SaleEndDate": None,
-                    "LastUpdated": current_time,
-                }
+                "_id": 1,
+                "Price": 1,
+                "PriceA": 1,
+                "SalePrice": 1,
+                "SaleStartDate": 1,
+                "SaleEndDate": 1,
             },
-        )
+        ).to_list(5000)
+
+        for item_doc in sale_items:
+            sale_end = parse_price_change_datetime(item_doc.get("SaleEndDate"))
+            if not sale_end or sale_end > current_time:
+                continue
+
+            default_price = float(item_doc.get("Price", 0) or 0)
+            current_sale_price = float(item_doc.get("SalePrice", default_price) or default_price)
+            current_price_a = float(item_doc.get("PriceA", current_sale_price) or current_sale_price)
+            reset_fields = {
+                "SalePrice": default_price,
+                "SaleStartDate": None,
+                "SaleEndDate": None,
+                "LastUpdated": current_time,
+            }
+
+            # If PriceA was mirroring the sale price, bring it back to the base price too.
+            if abs(current_price_a - current_sale_price) < 0.0001:
+                reset_fields["PriceA"] = default_price
+
+            await target_item_collection.update_one(
+                {"_id": item_doc["_id"]},
+                {
+                    "$set": reset_fields
+                },
+            )
 
 
 async def apply_due_approved_price_changes(now: Optional[datetime] = None):
@@ -1560,6 +1925,53 @@ async def allow_private_network_requests(request: Request, call_next):
 async def read_root():
     return {"status": "POS Backend is running"}
 
+
+@app.get("/erp/branches", response_model=List[ERPBranchOut])
+async def list_erp_branches():
+    branch_source_collection = await get_erp_branch_source_collection()
+    branch_docs = await branch_source_collection.find(
+        {},
+        {
+            "_id": 1,
+            "BranchID": 1,
+            "BranchNo": 1,
+            "BranchNumber": 1,
+            "StoreNumber": 1,
+            "StoreNo": 1,
+            "Sequence": 1,
+            "Seq": 1,
+            "PrimaryID": 1,
+            "Name": 1,
+            "StoreCode": 1,
+            "Region": 1,
+            "Address1": 1,
+            "City": 1,
+            "PhoneNumber": 1,
+            "ParentStoreID": 1,
+            "LastUpdated": 1,
+        },
+    ).to_list(2000)
+    sorted_branch_docs = sorted(branch_docs, key=get_branch_primary_sort_key)
+
+    branch_records = [
+        map_erp_branch_for_output(doc, store_id=index)
+        for index, doc in enumerate(sorted_branch_docs, start=1)
+    ]
+    if branch_records:
+        return branch_records
+
+    fallback_store_ids = await get_known_erp_branch_store_ids()
+    return [
+        ERPBranchOut(
+            store_id=store_id,
+            code=f"STORE-{store_id:02d}",
+            name=format_erp_branch_name(store_id),
+            database_name=get_price_change_store_database_name(store_id),
+        )
+        for store_id in fallback_store_ids
+    ]
+
+
 @app.get("/item/{code}")
 async def get_item(code: str):
     """Fetch item details from DB."""
@@ -1581,7 +1993,11 @@ async def get_item(code: str):
 
 
 @app.get("/erp/items", response_model=List[ERPItemOut])
-async def list_erp_items(search: Optional[str] = Query(default=None), limit: int = Query(default=300, ge=1, le=2000)):
+async def list_erp_items(
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=2000),
+    store_id: Optional[int] = Query(default=None),
+):
     await ensure_price_change_updates_synced()
     query = {}
     if search:
@@ -1595,18 +2011,21 @@ async def list_erp_items(search: Optional[str] = Query(default=None), limit: int
             ]
         }
 
-    items = await item_collection.find(query).sort("Description", 1).to_list(limit)
+    target_item_collection = get_price_change_item_collection(store_id)
+    items = await target_item_collection.find(query).sort("Description", 1).to_list(limit)
     return [map_item_for_erp(item) for item in items]
 
 
 @app.get("/erp/items/by-lookup/{lookup_code}", response_model=ERPItemOut)
-async def get_erp_item_by_lookup(lookup_code: str):
+async def get_erp_item_by_lookup(
+    lookup_code: str,
+    store_id: Optional[int] = Query(default=None),
+):
     await ensure_price_change_updates_synced()
-    item = await find_erp_item_by_lookup_or_id(lookup_code)
+    item = await find_erp_item_by_lookup_or_id(lookup_code, store_id=store_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return map_item_for_erp(item)
-
 
 @app.get("/erp/categories", response_model=List[ERPCategoryOut])
 async def list_erp_categories(search: Optional[str] = Query(default="")):
@@ -2424,6 +2843,63 @@ async def list_erp_price_changes(
     return [map_price_change_for_erp(change) for change in changes]
 
 
+@app.get("/erp/price-changes/history/{lookup_code}", response_model=List[ERPPriceChangeHistoryRow])
+async def list_erp_price_change_history(
+    lookup_code: str,
+    store_id: Optional[int] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    await ensure_price_change_updates_synced(force=True)
+
+    normalized_lookup = str(lookup_code or "").strip()
+    if not normalized_lookup:
+        return []
+
+    source_item = await find_erp_item_by_lookup_or_id(normalized_lookup, store_id=store_id)
+    if source_item:
+        normalized_lookup = str(source_item.get("ItemLookupCode", normalized_lookup) or "").strip()
+
+    if not normalized_lookup:
+        return []
+
+    query = {
+        "Items": {
+            "$elemMatch": {
+                "ItemLookupCode": {
+                    "$regex": f"^{re.escape(normalized_lookup)}$",
+                    "$options": "i",
+                }
+            }
+        }
+    }
+    if store_id is not None:
+        query["StoreID"] = parse_price_change_store_id(store_id, default=0)
+
+    change_docs = await price_change_collection.find(query).sort(
+        [("EffectDate", -1), ("Time", -1), ("ID", -1)]
+    ).to_list(limit)
+
+    history_rows = []
+    for change_doc in change_docs:
+        for item_doc in change_doc.get("Items", []):
+            if not isinstance(item_doc, dict):
+                continue
+
+            item_lookup_code = str(item_doc.get("ItemLookupCode", "") or "").strip()
+            if item_lookup_code.casefold() != normalized_lookup.casefold():
+                continue
+
+            history_rows.append(
+                map_price_change_history_row(
+                    change_doc,
+                    item_doc,
+                    source_item=source_item,
+                )
+            )
+
+    return history_rows
+
+
 @app.get("/erp/price-changes/{change_id}", response_model=ERPPriceChangeOut)
 async def get_erp_price_change(change_id: int):
     await ensure_price_change_updates_synced(force=True)
@@ -2461,7 +2937,10 @@ async def create_erp_price_change(payload: ERPPriceChangeCreate):
             raise HTTPException(status_code=409, detail=f"Duplicate price change item: {lookup_code}")
         seen_lookup_codes.add(normalized_lookup)
 
-        source_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        source_item = await find_erp_item_by_lookup_or_id(
+            lookup_code,
+            store_id=payload.store_id,
+        )
         if not source_item:
             raise HTTPException(status_code=404, detail=f"Item not found: {lookup_code}")
 
@@ -2494,6 +2973,24 @@ async def update_erp_price_change(change_id: int, payload: ERPPriceChangeUpdate)
         raise HTTPException(status_code=400, detail="Add at least one item to the price change")
 
     now = datetime.utcnow()
+    existing_item_docs = existing.get("Items", []) if isinstance(existing.get("Items"), list) else []
+    existing_items_by_lookup = {}
+    existing_items_by_id = {}
+    for existing_item_doc in existing_item_docs:
+        if not isinstance(existing_item_doc, dict):
+            continue
+
+        existing_lookup_code = str(existing_item_doc.get("ItemLookupCode", "") or "").strip().lower()
+        if existing_lookup_code:
+            existing_items_by_lookup[existing_lookup_code] = existing_item_doc
+
+        try:
+            existing_item_id = int(existing_item_doc.get("ID", 0) or 0)
+        except (TypeError, ValueError):
+            existing_item_id = 0
+        if existing_item_id > 0:
+            existing_items_by_id[existing_item_id] = existing_item_doc
+
     seen_lookup_codes = set()
     item_docs = []
     for item_payload in payload.items:
@@ -2505,11 +3002,32 @@ async def update_erp_price_change(change_id: int, payload: ERPPriceChangeUpdate)
             raise HTTPException(status_code=409, detail=f"Duplicate price change item: {lookup_code}")
         seen_lookup_codes.add(normalized_lookup)
 
-        source_item = await find_erp_item_by_lookup_or_id(lookup_code)
+        source_item = await find_erp_item_by_lookup_or_id(
+            lookup_code,
+            store_id=payload.store_id,
+        )
         if not source_item:
             raise HTTPException(status_code=404, detail=f"Item not found: {lookup_code}")
 
-        item_docs.append(build_price_change_item_doc(item_payload, source_item=source_item, now=now))
+        existing_price_change_item = None
+        try:
+            incoming_item_id = int(item_payload.id or 0)
+        except (TypeError, ValueError):
+            incoming_item_id = 0
+
+        if incoming_item_id > 0:
+            existing_price_change_item = existing_items_by_id.get(incoming_item_id)
+        if existing_price_change_item is None:
+            existing_price_change_item = existing_items_by_lookup.get(normalized_lookup)
+
+        item_docs.append(
+            build_price_change_item_doc(
+                item_payload,
+                source_item=source_item,
+                existing_price_change_item=existing_price_change_item,
+                now=now,
+            )
+        )
 
     update_doc = build_price_change_doc(
         int(change_id),
@@ -3408,7 +3926,7 @@ async def get_all_loyalty_customers():
     # ==================== M-PESA STK PUSH ====================
 
 from fastapi import Request
-import os, requests, base64
+import requests, base64
 from datetime import datetime
 from dotenv import load_dotenv
 

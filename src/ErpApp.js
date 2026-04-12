@@ -115,6 +115,50 @@ const EMPTY_PRICE_CHANGE_PRICE = {
   lowerBound: "0",
   upperBound: "0",
 };
+const PRICE_CHANGE_PRICE_FIELDS = Object.keys(EMPTY_PRICE_CHANGE_PRICE);
+
+function parsePriceChangeStoreId(value, fallbackStoreId = 0) {
+  const normalizedStoreId = Number(value);
+  if (Number.isFinite(normalizedStoreId)) {
+    return Math.trunc(normalizedStoreId);
+  }
+
+  const fallbackValue = Number(fallbackStoreId);
+  return Number.isFinite(fallbackValue) ? Math.trunc(fallbackValue) : 0;
+}
+
+function resolvePriceChangeStoreId(value, fallbackStoreId = 1) {
+  const normalizedStoreId = parsePriceChangeStoreId(value, fallbackStoreId);
+  if (normalizedStoreId > 0) {
+    return normalizedStoreId;
+  }
+
+  const fallbackValue = parsePriceChangeStoreId(fallbackStoreId, 1);
+  return fallbackValue > 0 ? fallbackValue : 1;
+}
+
+function getDefaultPriceChangeStoreId(currentUser) {
+  return resolvePriceChangeStoreId(currentUser?.store_id, 1);
+}
+
+function formatPriceChangeBranchLabel(storeId) {
+  const normalizedStoreId = parsePriceChangeStoreId(storeId, 0);
+  if (normalizedStoreId <= 0) {
+    return "Default Database (Store 0)";
+  }
+
+  if (normalizedStoreId === 1) {
+    return "Main Store (Store ID 1)";
+  }
+
+  return `Branch ${normalizedStoreId} (Store ID ${normalizedStoreId})`;
+}
+
+function buildPriceChangeStoreScopedPath(path, storeId) {
+  const normalizedStoreId = parsePriceChangeStoreId(storeId, 0);
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}store_id=${encodeURIComponent(String(normalizedStoreId))}`;
+}
 
 function formatLocalDateValue(date = new Date()) {
   const normalized = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -253,19 +297,49 @@ function buildPriceChangeLineFromItem(item) {
     itemLookupCode: String(item?.lookup_code || ""),
     description: String(item?.description || ""),
     stockAvailable: Number(item?.stock_available ?? item?.stock ?? 0),
-    saleStart: formatDateTimeInputValue(item?.sale_start_date),
-    saleEnd: formatDateTimeInputValue(item?.sale_end_date),
+    saleStart: formatDateInputValue(item?.sale_start_date),
+    saleEnd: formatDateInputValue(item?.sale_end_date),
     price,
     oldPrice: { ...price },
   };
 }
 
-function createEmptyPriceChangeForm(user = "") {
+function isSamePriceChangeNumber(leftValue, rightValue) {
+  return Math.abs(Number(leftValue || 0) - Number(rightValue || 0)) < 0.0001;
+}
+
+function mergePriceChangeLineWithBranchItem(line, item) {
+  const refreshedLine = buildPriceChangeLineFromItem(item);
+  const nextPrice = { ...line.price };
+
+  PRICE_CHANGE_PRICE_FIELDS.forEach((field) => {
+    const hasCustomValue = !isSamePriceChangeNumber(
+      line?.price?.[field],
+      line?.oldPrice?.[field]
+    );
+    nextPrice[field] = hasCustomValue ? line.price[field] : refreshedLine.price[field];
+  });
+
+  return {
+    ...refreshedLine,
+    rowId: line.rowId,
+    quantity: line.quantity,
+    saleStart: line.saleStart,
+    saleEnd: line.saleEnd,
+    timeBased: line.timeBased,
+    loyaltyBased: line.loyaltyBased,
+    timeStart: line.timeStart,
+    timeEnd: line.timeEnd,
+    price: nextPrice,
+  };
+}
+
+function createEmptyPriceChangeForm(user = "", defaultStoreId = 1) {
   return {
     description: "",
     effectDate: "",
     type: "0",
-    storeId: "1",
+    storeId: String(resolvePriceChangeStoreId(defaultStoreId, 1)),
     purchaseOrderId: "",
     status: "Open",
     user: String(user || ""),
@@ -291,7 +365,7 @@ function mapPriceChangeToForm(priceChange, fallbackUser = "") {
     description: String(priceChange?.description || ""),
     effectDate: formatDateTimeInputValue(priceChange?.effect_date),
     type: String(Number(priceChange?.type || 0)),
-    storeId: String(Number(priceChange?.store_id || 1)),
+    storeId: String(Number(priceChange?.store_id ?? 0)),
     purchaseOrderId: priceChange?.purchase_order_id
       ? String(Number(priceChange.purchase_order_id))
       : "",
@@ -313,8 +387,8 @@ function mapPriceChangeToForm(priceChange, fallbackUser = "") {
           description: String(item?.description || ""),
           stockAvailable: 0,
           quantity: String(Number(item?.quantity || 0)),
-          saleStart: formatDateTimeInputValue(item?.sale_start),
-          saleEnd: formatDateTimeInputValue(item?.sale_end),
+          saleStart: formatDateInputValue(item?.sale_start),
+          saleEnd: formatDateInputValue(item?.sale_end),
           timeBased: Boolean(item?.time_based),
           loyaltyBased: Boolean(item?.loyalty_based),
           timeStart: String(item?.time_start || ""),
@@ -810,6 +884,14 @@ function formatDateTimeInputValue(value) {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(
     parsed.getHours()
   )}:${pad(parsed.getMinutes())}`;
+}
+
+function buildPriceChangeDateBoundaryValue(value, boundary = "start") {
+  const normalizedDate = formatDateInputValue(value);
+  if (!normalizedDate) return null;
+  return boundary === "end"
+    ? `${normalizedDate}T23:59:59`
+    : `${normalizedDate}T00:00:00`;
 }
 
 function formatDisplayValue(value, fallback = "Not set") {
@@ -1414,10 +1496,18 @@ function ErpApp({ currentUser, onLogout }) {
   const [priceChangesError, setPriceChangesError] = useState("");
   const [selectedPriceChangeId, setSelectedPriceChangeId] = useState(null);
   const [priceChangeComposerMode, setPriceChangeComposerMode] = useState("view");
+  const [priceChangeBranches, setPriceChangeBranches] = useState([]);
+  const [priceChangeBranchesStatus, setPriceChangeBranchesStatus] = useState("idle");
   const [savingPriceChange, setSavingPriceChange] = useState(false);
   const [priceChangeActionPending, setPriceChangeActionPending] = useState(false);
   const [priceChangeLookupValue, setPriceChangeLookupValue] = useState("");
   const [priceChangeLookupPending, setPriceChangeLookupPending] = useState(false);
+  const [priceChangeBranchSyncPending, setPriceChangeBranchSyncPending] = useState(false);
+  const [showPriceChangeHistoryModal, setShowPriceChangeHistoryModal] = useState(false);
+  const [priceChangeHistoryRows, setPriceChangeHistoryRows] = useState([]);
+  const [priceChangeHistoryLoading, setPriceChangeHistoryLoading] = useState(false);
+  const [priceChangeHistoryError, setPriceChangeHistoryError] = useState("");
+  const [priceChangeHistoryLookupCode, setPriceChangeHistoryLookupCode] = useState("");
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState(null);
   const [selectedInventoryItemLookupCode, setSelectedInventoryItemLookupCode] = useState("");
   const [showAddSupplierForm, setShowAddSupplierForm] = useState(false);
@@ -1472,6 +1562,7 @@ function ErpApp({ currentUser, onLogout }) {
   const purchaseOrderLookupInputRef = useRef(null);
   const purchaseOrderLookupQuantityRef = useRef(null);
   const priceChangeLookupInputRef = useRef(null);
+  const priceChangeBranchSyncRequestRef = useRef(0);
   const itemFormRequestRef = useRef(0);
   const [newItemForm, setNewItemForm] = useState({ ...EMPTY_ITEM_FORM });
   const [newSupplierForm, setNewSupplierForm] = useState({ ...EMPTY_SUPPLIER_FORM });
@@ -2048,6 +2139,49 @@ function ErpApp({ currentUser, onLogout }) {
       approvedDue,
     };
   }, [priceChangesRecords]);
+  const priceChangeBranchOptions = useMemo(() => {
+    return (Array.isArray(priceChangeBranches) ? priceChangeBranches : [])
+      .map((branch) => {
+        const storeId = parsePriceChangeStoreId(branch?.store_id, 0);
+        if (storeId <= 0) {
+          return null;
+        }
+
+        const branchName = String(branch?.name || "").trim() || formatPriceChangeBranchLabel(storeId);
+        return {
+          value: String(storeId),
+          label: branchName,
+          shortLabel: branchName,
+          code: String(branch?.code || "").trim(),
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => Number(left.value) - Number(right.value));
+  }, [priceChangeBranches]);
+
+  const priceChangeBranchUnavailable = useMemo(() => {
+    if (priceChangeBranchesStatus === "loading" || priceChangeBranchesStatus === "idle") {
+      return true;
+    }
+
+    return !priceChangeBranchOptions.length;
+  }, [priceChangeBranchesStatus, priceChangeBranchOptions.length]);
+
+  const priceChangeBranchPlaceholder = useMemo(() => {
+    if (priceChangeBranchesStatus === "loading" || priceChangeBranchesStatus === "idle") {
+      return "Loading branches...";
+    }
+
+    if (priceChangeBranchesStatus === "error") {
+      return "Restart backend to load branches";
+    }
+
+    if (!priceChangeBranchOptions.length) {
+      return "No branches found";
+    }
+
+    return "Select branch";
+  }, [priceChangeBranchesStatus, priceChangeBranchOptions.length]);
   const buildPurchaseOrderPreviewData = () => {
     const resolvedSupplier =
       suppliersRecords.find(
@@ -2315,11 +2449,37 @@ function ErpApp({ currentUser, onLogout }) {
   const resetPriceChangeForm = (overrides = {}) => {
     const currentUserLabel =
       currentUser?.name || currentUser?.number || "";
+    const defaultStoreId = getDefaultPriceChangeStoreId(currentUser);
+    priceChangeBranchSyncRequestRef.current += 1;
+    setPriceChangeBranchSyncPending(false);
+    setShowPriceChangeHistoryModal(false);
+    setPriceChangeHistoryRows([]);
+    setPriceChangeHistoryLoading(false);
+    setPriceChangeHistoryError("");
+    setPriceChangeHistoryLookupCode("");
     setNewPriceChangeForm({
-      ...createEmptyPriceChangeForm(currentUserLabel),
+      ...createEmptyPriceChangeForm(currentUserLabel, defaultStoreId),
       ...overrides,
     });
     setPriceChangeLookupValue("");
+  };
+
+  const closePriceChangeHistoryModal = () => {
+    setShowPriceChangeHistoryModal(false);
+    setPriceChangeHistoryLoading(false);
+    setPriceChangeHistoryError("");
+  };
+
+  const resolvePriceChangeHistoryLookupCode = () => {
+    const typedLookup = String(priceChangeLookupValue || "").trim();
+    if (typedLookup) {
+      return typedLookup;
+    }
+
+    const lastFormItem = [...newPriceChangeForm.items]
+      .reverse()
+      .find((item) => String(item?.itemLookupCode || "").trim());
+    return String(lastFormItem?.itemLookupCode || priceChangeHistoryLookupCode || "").trim();
   };
 
   const openCreatePriceChangeComposer = () => {
@@ -2340,22 +2500,186 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     const status = String(selectedPriceChangeRecord.status || "").toLowerCase();
-    if (status === "applied" || status === "cancelled") {
-      pushAlert("info", "Applied or cancelled price changes are kept read-only.");
+    if (status === "cancelled") {
+      pushAlert("info", "Cancelled price changes are kept read-only.");
       return;
     }
 
+    priceChangeBranchSyncRequestRef.current += 1;
+    setPriceChangeBranchSyncPending(false);
     setNewPriceChangeForm(
       mapPriceChangeToForm(
         selectedPriceChangeRecord,
         currentUser?.name || currentUser?.number || ""
       )
     );
+    setPriceChangeHistoryLookupCode(
+      String(selectedPriceChangeRecord?.items?.slice(-1)?.[0]?.item_lookup_code || "").trim()
+    );
     setPriceChangeLookupValue("");
     setPriceChangeComposerMode("edit");
   };
 
+  const handleOpenPriceChangeHistory = async () => {
+    const lookupCode = resolvePriceChangeHistoryLookupCode();
+    if (!lookupCode) {
+      pushAlert("warning", "Enter or add an item code first.");
+      return;
+    }
+
+    setShowPriceChangeHistoryModal(true);
+    setPriceChangeHistoryRows([]);
+    setPriceChangeHistoryLoading(true);
+    setPriceChangeHistoryError("");
+    setPriceChangeHistoryLookupCode(lookupCode);
+
+    try {
+      const historyRows = await fetchJsonWithFallback(
+        buildPriceChangeStoreScopedPath(
+          `/erp/price-changes/history/${encodeURIComponent(lookupCode)}`,
+          newPriceChangeForm.storeId
+        ),
+        undefined,
+        "Failed to load price change history"
+      );
+      setPriceChangeHistoryRows(Array.isArray(historyRows) ? historyRows : []);
+      setPriceChangeHistoryLookupCode(
+        String(historyRows?.[0]?.item_lookup_code || lookupCode).trim()
+      );
+    } catch (error) {
+      setPriceChangeHistoryError(
+        error?.message || "Failed to load price change history."
+      );
+    } finally {
+      setPriceChangeHistoryLoading(false);
+    }
+  };
+
+  const loadPriceChangeBranches = async () => {
+    setPriceChangeBranchesStatus("loading");
+    try {
+      const data = await fetchJsonWithFallback(
+        "/erp/branches",
+        undefined,
+        "Failed to load branches"
+      );
+      setPriceChangeBranches(Array.isArray(data) ? data : []);
+      setPriceChangeBranchesStatus("loaded");
+    } catch (error) {
+      setPriceChangeBranches([]);
+      setPriceChangeBranchesStatus("error");
+      const message = String(error?.message || "").trim().toLowerCase() === "not found"
+        ? "Branch route is missing on the running backend. Restart backend-python so ERP can load branch table values."
+        : error?.message || "Failed to load branches from the backend.";
+      pushAlert("warning", message);
+    }
+  };
+
+  const refreshPriceChangeItemsForStore = async (storeId, itemsToRefresh = []) => {
+    const linesToRefresh = (Array.isArray(itemsToRefresh) ? itemsToRefresh : []).filter(
+      (item) => String(item?.itemLookupCode || "").trim()
+    );
+    if (!linesToRefresh.length) {
+      return;
+    }
+
+    const normalizedStoreId = resolvePriceChangeStoreId(
+      storeId,
+      getDefaultPriceChangeStoreId(currentUser)
+    );
+    const requestId = priceChangeBranchSyncRequestRef.current + 1;
+    priceChangeBranchSyncRequestRef.current = requestId;
+    setPriceChangeBranchSyncPending(true);
+
+    const results = await Promise.allSettled(
+      linesToRefresh.map(async (line) => {
+        const lookupCode = String(line.itemLookupCode || "").trim();
+        const item = await fetchJsonWithFallback(
+          buildPriceChangeStoreScopedPath(
+            `/erp/items/by-lookup/${encodeURIComponent(lookupCode)}`,
+            normalizedStoreId
+          ),
+          undefined,
+          `Failed to load ${lookupCode} from the selected branch`
+        );
+
+        return {
+          lookupCode,
+          rowId: line.rowId,
+          nextLine: mergePriceChangeLineWithBranchItem(line, item),
+        };
+      })
+    );
+
+    if (priceChangeBranchSyncRequestRef.current !== requestId) {
+      return;
+    }
+
+    const nextLinesByRowId = new Map();
+    const missingLookupCodes = [];
+
+    results.forEach((result, index) => {
+      const fallbackLookupCode = String(linesToRefresh[index]?.itemLookupCode || "").trim();
+      if (result.status === "fulfilled") {
+        nextLinesByRowId.set(result.value.rowId, result.value.nextLine);
+        return;
+      }
+
+      if (fallbackLookupCode) {
+        missingLookupCodes.push(fallbackLookupCode);
+      }
+    });
+
+    setNewPriceChangeForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => nextLinesByRowId.get(item.rowId) || item),
+    }));
+
+    if (missingLookupCodes.length) {
+      pushAlert(
+        "warning",
+        `Some items were not found in ${formatPriceChangeBranchLabel(normalizedStoreId)}: ${Array.from(
+          new Set(missingLookupCodes)
+        ).join(", ")}.`
+      );
+    }
+
+    if (priceChangeBranchSyncRequestRef.current === requestId) {
+      setPriceChangeBranchSyncPending(false);
+    }
+  };
+
   const updatePriceChangeForm = (field, value) => {
+    if (field === "storeId") {
+      const nextStoreId = String(
+        resolvePriceChangeStoreId(value, getDefaultPriceChangeStoreId(currentUser))
+      );
+      const currentStoreId = String(newPriceChangeForm.storeId ?? "");
+      const currentItems = Array.isArray(newPriceChangeForm.items)
+        ? newPriceChangeForm.items
+        : [];
+
+      if (currentStoreId === nextStoreId) {
+        return;
+      }
+
+      setNewPriceChangeForm((prev) => ({
+        ...prev,
+        storeId: nextStoreId,
+      }));
+
+      if (currentItems.length) {
+        refreshPriceChangeItemsForStore(nextStoreId, currentItems).catch((error) => {
+          pushAlert(
+            "error",
+            error?.message || "Failed to refresh branch item prices."
+          );
+          setPriceChangeBranchSyncPending(false);
+        });
+      }
+      return;
+    }
+
     setNewPriceChangeForm((prev) => ({
       ...prev,
       [field]: value,
@@ -2378,10 +2702,33 @@ function ErpApp({ currentUser, onLogout }) {
         item.rowId === rowId
           ? {
               ...item,
-              price: {
-                ...item.price,
-                [field]: value,
-              },
+              price: (() => {
+                const nextPrice = {
+                  ...item.price,
+                  [field]: value,
+                };
+
+                const saleTracksDefault =
+                  !item.saleStart &&
+                  !item.saleEnd &&
+                  !item.timeBased &&
+                  !item.loyaltyBased &&
+                  isSamePriceChangeNumber(item.price.sale, item.price.default);
+                const priceATracksSale = isSamePriceChangeNumber(item.price.A, item.price.sale);
+
+                if (field === "default" && saleTracksDefault) {
+                  nextPrice.sale = value;
+                  if (priceATracksSale) {
+                    nextPrice.A = value;
+                  }
+                }
+
+                if (field === "sale" && priceATracksSale) {
+                  nextPrice.A = value;
+                }
+
+                return nextPrice;
+              })(),
             }
           : item
       ),
@@ -2418,6 +2765,11 @@ function ErpApp({ currentUser, onLogout }) {
   };
 
   const handleAddPriceChangeItem = async () => {
+    if (priceChangeBranchSyncPending) {
+      pushAlert("info", "Wait for the selected branch items to finish refreshing.");
+      return;
+    }
+
     const lookupCode = priceChangeLookupValue.trim();
     if (!lookupCode) {
       pushAlert("warning", "Enter an item lookup code or barcode.");
@@ -2430,6 +2782,7 @@ function ErpApp({ currentUser, onLogout }) {
         lookupCode.toLowerCase()
     );
     if (duplicate) {
+      setPriceChangeHistoryLookupCode(lookupCode);
       pushAlert("info", `${lookupCode} is already in this price change.`);
       return;
     }
@@ -2437,15 +2790,24 @@ function ErpApp({ currentUser, onLogout }) {
     setPriceChangeLookupPending(true);
     try {
       const item = await fetchJsonWithFallback(
-        `/erp/items/by-lookup/${encodeURIComponent(lookupCode)}`,
+        buildPriceChangeStoreScopedPath(
+          `/erp/items/by-lookup/${encodeURIComponent(lookupCode)}`,
+          newPriceChangeForm.storeId
+        ),
         undefined,
-        "Failed to load item for price change"
+        "Failed to load item for the selected branch"
       );
       setNewPriceChangeForm((prev) => ({
         ...prev,
         items: [...prev.items, buildPriceChangeLineFromItem(item)],
       }));
       setPriceChangeLookupValue("");
+      setPriceChangeHistoryLookupCode(
+        String(item?.lookup_code || lookupCode).trim()
+      );
+      window.setTimeout(() => {
+        priceChangeLookupInputRef.current?.focus();
+      }, 0);
       pushAlert("success", `${item.description || lookupCode} added to the price change.`);
     } catch (error) {
       pushAlert("error", error.message || "Failed to add item to price change.");
@@ -2456,6 +2818,11 @@ function ErpApp({ currentUser, onLogout }) {
 
   const handleSavePriceChange = async (event) => {
     event.preventDefault();
+
+    if (priceChangeBranchSyncPending) {
+      pushAlert("info", "Wait for the selected branch refresh to finish before saving.");
+      return;
+    }
 
     if (!newPriceChangeForm.items.length) {
       pushAlert("warning", "Add at least one item to this price change.");
@@ -2475,7 +2842,10 @@ function ErpApp({ currentUser, onLogout }) {
         ? new Date(newPriceChangeForm.effectDate).toISOString()
         : null,
       type: Number(newPriceChangeForm.type || 0),
-      store_id: Number(newPriceChangeForm.storeId || 1),
+      store_id: resolvePriceChangeStoreId(
+        newPriceChangeForm.storeId,
+        getDefaultPriceChangeStoreId(currentUser)
+      ),
       purchase_order_id: newPriceChangeForm.purchaseOrderId
         ? Number(newPriceChangeForm.purchaseOrderId)
         : null,
@@ -2498,8 +2868,8 @@ function ErpApp({ currentUser, onLogout }) {
         item_lookup_code: item.itemLookupCode.trim(),
         description: item.description.trim(),
         quantity: Number(item.quantity || 0),
-        sale_start: item.saleStart ? new Date(item.saleStart).toISOString() : null,
-        sale_end: item.saleEnd ? new Date(item.saleEnd).toISOString() : null,
+        sale_start: buildPriceChangeDateBoundaryValue(item.saleStart, "start"),
+        sale_end: buildPriceChangeDateBoundaryValue(item.saleEnd, "end"),
         time_based: Boolean(item.timeBased),
         loyalty_based: Boolean(item.loyaltyBased),
         time_start: item.timeStart || null,
@@ -2548,6 +2918,9 @@ function ErpApp({ currentUser, onLogout }) {
       setPriceChangeComposerMode("view");
       resetPriceChangeForm();
       await loadPriceChanges(searchTerm);
+      if (String(saved?.status || "").toLowerCase() === "applied") {
+        await syncPriceChangeItemsWithCatalog(saved);
+      }
       pushAlert(
         "success",
         isEditingPriceChange
@@ -2592,6 +2965,9 @@ function ErpApp({ currentUser, onLogout }) {
       );
       setSelectedPriceChangeId(updated.id);
       await loadPriceChanges(searchTerm);
+      if (String(updated?.status || "").toLowerCase() === "applied") {
+        await syncPriceChangeItemsWithCatalog(updated);
+      }
       pushAlert(
         "success",
         updated.status === "Applied"
@@ -2629,6 +3005,7 @@ function ErpApp({ currentUser, onLogout }) {
       );
       setSelectedPriceChangeId(updated.id);
       await loadPriceChanges(searchTerm);
+      await syncPriceChangeItemsWithCatalog(updated);
       pushAlert("success", "Price change applied successfully.");
     } catch (error) {
       pushAlert("error", getPriceChangeErrorMessage(error, "Failed to apply price change"));
@@ -2772,6 +3149,43 @@ function ErpApp({ currentUser, onLogout }) {
         index === existingIndex ? { ...item, ...nextItem } : item
       );
     });
+  };
+
+  const syncPriceChangeItemsWithCatalog = async (priceChange) => {
+    const targetStoreId = parsePriceChangeStoreId(priceChange?.store_id, 0);
+    if (targetStoreId > 1) {
+      return;
+    }
+
+    const lookupCodes = Array.from(
+      new Set(
+        (Array.isArray(priceChange?.items) ? priceChange.items : [])
+          .map((item) => String(item?.item_lookup_code || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (!lookupCodes.length) {
+      return;
+    }
+
+    await Promise.all(
+      lookupCodes.map(async (lookupCode) => {
+        try {
+          const item = await fetchJsonWithFallback(
+            buildPriceChangeStoreScopedPath(
+              `/erp/items/by-lookup/${encodeURIComponent(lookupCode)}`,
+              targetStoreId
+            ),
+            undefined,
+            "Failed to refresh updated item"
+          );
+          upsertPurchaseOrderCatalogItem(item);
+        } catch {
+          // Ignore missing items here so the price-change action can still succeed.
+        }
+      })
+    );
   };
 
   const resolvePurchaseOrderLookupItem = async (lookupValue) => {
@@ -4249,6 +4663,11 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isPriceChangeView, searchTerm]);
 
   useEffect(() => {
+    if (!isPriceChangeView) return;
+    loadPriceChangeBranches();
+  }, [isPriceChangeView]);
+
+  useEffect(() => {
     if (!showAddPurchaseOrderForm || !isPurchaseOrdersView || isViewingPurchaseOrder) {
       return undefined;
     }
@@ -4708,13 +5127,21 @@ function ErpApp({ currentUser, onLogout }) {
                     onImport={() =>
                       pushAlert("info", "Price change import flow is ready for the next pass.")
                     }
-                    onOpenHistory={() =>
-                      pushAlert("info", "Price change history view is ready for the next pass.")
-                    }
+                    onOpenHistory={handleOpenPriceChangeHistory}
+                    showHistoryModal={showPriceChangeHistoryModal}
+                    historyRows={priceChangeHistoryRows}
+                    historyLoading={priceChangeHistoryLoading}
+                    historyError={priceChangeHistoryError}
+                    historyLookupCode={priceChangeHistoryLookupCode}
+                    onCloseHistory={closePriceChangeHistoryModal}
                     onOpenLogs={() =>
                       pushAlert("info", "Price change logs panel is ready for the next pass.")
                     }
                     form={newPriceChangeForm}
+                    branchOptions={priceChangeBranchOptions}
+                    branchPlaceholder={priceChangeBranchPlaceholder}
+                    branchUnavailable={priceChangeBranchUnavailable}
+                    branchSelectionPending={priceChangeBranchSyncPending}
                     onFormChange={updatePriceChangeForm}
                     onItemFieldChange={updatePriceChangeItemField}
                     onItemPriceChange={updatePriceChangeItemPrice}
