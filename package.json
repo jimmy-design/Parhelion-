@@ -1,8 +1,8 @@
 {
   "name": "eastmatt-pos-app",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Parhelion desktop POS and ERP clients with a server-hosted backend.",
-  "author": "James Macharia",
+  "author": "James Macharia phone 0729 727862",
   "homepage": ".",
   "main": "electron/main.js",
   "repository": {

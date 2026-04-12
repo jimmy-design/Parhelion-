@@ -8,6 +8,19 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+function formatHistoryDateTime(value) {
+  if (!value) return "Immediate";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString([], {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
@@ -564,13 +577,12 @@ export default function PriceChangeWorkspace({
                     <thead>
                       <tr>
                         <th>Barcode</th>
-                        <th>Code</th>
-                        <th>Item Lookup Code</th>
-                        <th>Effect Date</th>
+                        <th className="erp-price-change-history-code-col">Code</th>
+                        <th className="erp-price-change-history-effect-col">Effect Date</th>
                         <th>Price</th>
                         <th>Cost</th>
                         <th>Sale Price</th>
-                        <th>User</th>
+                        <th className="erp-price-change-history-user-col">User</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -580,18 +592,23 @@ export default function PriceChangeWorkspace({
                             key={`price-change-history-${row.item_lookup_code}-${row.effect_date || "immediate"}-${rowIndex}`}
                           >
                             <td>{row.barcode || "--"}</td>
-                            <td>{row.code || "--"}</td>
-                            <td>{row.item_lookup_code || "--"}</td>
-                            <td>{formatDateTime(row.effect_date)}</td>
+                            <td className="erp-price-change-history-code-col">
+                              {row.item_lookup_code || "--"}
+                            </td>
+                            <td className="erp-price-change-history-effect-col">
+                              {formatHistoryDateTime(row.effect_date)}
+                            </td>
                             <td>{formatPriceValue(row.price)}</td>
                             <td>{formatPriceValue(row.cost)}</td>
                             <td>{formatPriceValue(row.sale_price)}</td>
-                            <td>{row.user || "--"}</td>
+                            <td className="erp-price-change-history-user-col">
+                              {row.user || "--"}
+                            </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="8" className="erp-table-empty">
+                          <td colSpan="7" className="erp-table-empty">
                             No price change history found.
                           </td>
                         </tr>

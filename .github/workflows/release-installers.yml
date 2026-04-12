@@ -24,7 +24,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and publish installers
+      - name: Build renderer
+        run: npm run build:renderer
+
+      - name: Build installers
+        shell: pwsh
+        run: |
+          if (Test-Path dist) {
+            Remove-Item dist\* -Recurse -Force
+          }
+
+          npm run package:pos
+          npm run package:erp
+
+      - name: Publish release assets
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release:installers
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $releaseName = $tag.TrimStart("v")
+          $assetPaths = Get-ChildItem -Path @(
+            "dist/pos-*.exe",
+            "dist/pos-*.exe.blockmap",
+            "dist/pos.yml",
+            "dist/erp-*.exe",
+            "dist/erp-*.exe.blockmap",
+            "dist/erp.yml"
+          ) -File | Sort-Object Name | ForEach-Object { $_.FullName }
+
+          if (-not $assetPaths -or $assetPaths.Count -eq 0) {
+            throw "No release assets were produced in dist."
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assetPaths --clobber
+          } else {
+            gh release create $tag @assetPaths --title $releaseName --verify-tag --generate-notes
+          }

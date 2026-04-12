@@ -983,6 +983,7 @@ const FALLBACK_UPDATE_STATE = {
 const UPDATE_STATUS_LABELS = {
   idle: "Ready",
   checking: "Checking",
+  retrying: "Retrying",
   available: "Available",
   downloading: "Downloading",
   downloaded: "Ready To Install",

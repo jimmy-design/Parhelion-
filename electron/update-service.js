@@ -3,12 +3,16 @@ const fs = require("fs");
 const path = require("path");
 
 const UPDATE_STATE_CHANNEL = "app-update:state";
+const TRANSIENT_RELEASE_RETRY_DELAY_MS = 30000;
+const MAX_TRANSIENT_RELEASE_RETRIES = 4;
 
 let updaterInitialized = false;
 let updaterHandlersRegistered = false;
 let updaterEventsAttached = false;
 let autoUpdater = null;
 let currentAppVariant = "pos";
+let transientReleaseRetryCount = 0;
+let transientReleaseRetryTimer = null;
 
 let updateState = createInitialState();
 
@@ -88,6 +92,54 @@ function formatUpdaterError(error) {
   return details.join(" ").trim() || "Unexpected update error.";
 }
 
+function clearTransientReleaseRetry() {
+  if (transientReleaseRetryTimer) {
+    clearTimeout(transientReleaseRetryTimer);
+    transientReleaseRetryTimer = null;
+  }
+}
+
+function resetTransientReleaseRetryState() {
+  transientReleaseRetryCount = 0;
+  clearTransientReleaseRetry();
+}
+
+function isReleaseMetadataPendingError(error) {
+  const message = formatUpdaterError(error);
+  return (
+    /cannot find .*\.yml in the latest release artifacts/i.test(message) ||
+    (/latest release artifacts/i.test(message) && /releases\/download\/.*\.yml/i.test(message))
+  );
+}
+
+function scheduleTransientReleaseRetry() {
+  if (transientReleaseRetryCount >= MAX_TRANSIENT_RELEASE_RETRIES) {
+    return null;
+  }
+
+  clearTransientReleaseRetry();
+  transientReleaseRetryCount += 1;
+
+  transientReleaseRetryTimer = setTimeout(() => {
+    transientReleaseRetryTimer = null;
+
+    if (!updateState.supported || !updateState.configured) {
+      return;
+    }
+
+    const updater = getAutoUpdater();
+    if (!updater) {
+      return;
+    }
+
+    updater.checkForUpdates().catch((error) => {
+      handleUpdaterError(error);
+    });
+  }, TRANSIENT_RELEASE_RETRY_DELAY_MS);
+
+  return transientReleaseRetryCount;
+}
+
 function normalizeReleaseNotes(releaseNotes) {
   if (typeof releaseNotes === "string") {
     return releaseNotes.trim();
@@ -124,6 +176,20 @@ function isUpdaterConfigured() {
 }
 
 function handleUpdaterError(error) {
+  if (isReleaseMetadataPendingError(error)) {
+    const retryAttempt = scheduleTransientReleaseRetry();
+    if (retryAttempt !== null) {
+      const metadataFile = `${currentAppVariant}.yml`;
+      return setUpdateState({
+        status: "retrying",
+        message:
+          `Release metadata (${metadataFile}) is still publishing on GitHub. ` +
+          `Retrying automatically in 30 seconds (${retryAttempt}/${MAX_TRANSIENT_RELEASE_RETRIES}).`,
+        checkedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   return setUpdateState({
     status: "error",
     message: formatUpdaterError(error),
@@ -155,6 +221,7 @@ function attachUpdaterEvents() {
   });
 
   updater.on("update-available", (info) => {
+    resetTransientReleaseRetryState();
     const version = resolveReleaseVersion(info);
 
     setUpdateState({
@@ -173,6 +240,7 @@ function attachUpdaterEvents() {
   });
 
   updater.on("update-not-available", () => {
+    resetTransientReleaseRetryState();
     setUpdateState({
       status: "up-to-date",
       message: "This device is already on the latest version.",
@@ -198,6 +266,7 @@ function attachUpdaterEvents() {
   });
 
   updater.on("update-downloaded", (info) => {
+    resetTransientReleaseRetryState();
     const version = resolveReleaseVersion(info) || updateState.availableVersion;
 
     setUpdateState({
@@ -231,6 +300,7 @@ function registerUpdaterHandlers() {
     }
 
     try {
+      resetTransientReleaseRetryState();
       const updater = getAutoUpdater();
       if (!updater) return cloneUpdateState();
       await updater.checkForUpdates();
@@ -288,6 +358,7 @@ async function initUpdater(appVariant = "pos") {
 
   updaterInitialized = true;
   currentAppVariant = appVariant === "erp" ? "erp" : "pos";
+  resetTransientReleaseRetryState();
   updateState = createInitialState();
 
   if (!hasElectronApp()) {

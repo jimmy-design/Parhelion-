@@ -2411,16 +2411,34 @@
 
 .erp-price-change-history-table {
   min-width: 900px;
+  table-layout: fixed;
 }
 
 .erp-price-change-history-table th,
 .erp-price-change-history-table td {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.erp-price-change-history-code-col {
+  width: 140px;
+  max-width: 140px;
+}
+
+.erp-price-change-history-effect-col {
+  width: 148px;
+  max-width: 148px;
+}
+
+.erp-price-change-history-user-col {
+  width: 190px;
+  min-width: 190px;
+}
+
+.erp-price-change-history-table td:nth-child(4),
 .erp-price-change-history-table td:nth-child(5),
-.erp-price-change-history-table td:nth-child(6),
-.erp-price-change-history-table td:nth-child(7) {
+.erp-price-change-history-table td:nth-child(6) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
