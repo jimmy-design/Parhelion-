@@ -131,7 +131,11 @@ export default function AdjustmentsWorkspace({
     if (!actionRequest?.nonce) return;
 
     if (actionRequest.type === "create") {
-      formPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      formPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
       window.setTimeout(() => itemInputRef.current?.focus(), 120);
       return;
     }

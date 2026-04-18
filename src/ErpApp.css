@@ -4374,8 +4374,31 @@
 }
 
 .erp-adjustments-layout {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  padding-bottom: 8px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.erp-adjustments-layout::-webkit-scrollbar {
+  width: 10px;
+}
+
+.erp-adjustments-layout::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(124, 147, 191, 0.38);
+}
+
+.erp-adjustments-layout::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .erp-adjustments-hero,
@@ -4538,11 +4561,13 @@
   grid-template-columns: minmax(0, 1.55fr) minmax(330px, 0.95fr);
   gap: 18px;
   align-items: start;
+  min-height: 0;
 }
 
 .erp-adjustments-side-stack {
   display: grid;
   gap: 18px;
+  align-content: start;
 }
 
 .erp-adjustments-panel {
