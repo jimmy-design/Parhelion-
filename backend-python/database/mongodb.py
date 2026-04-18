@@ -142,4 +142,12 @@ configuration_collection = db["configurations"]
 purchase_order_collection = db["purchaseorder"]
 purchase_order_entries_collection = db["purchaseorderentries"]
 price_change_collection = db["pricechanges"]
+adjustment_collection = db["adjustments"]
 branch_collection = branch_db[MONGO_BRANCH_COLLECTION]
+
+
+async def ensure_collection_exists(collection_name: str, database=None):
+    target_db = database or db
+    existing_collections = await target_db.list_collection_names()
+    if collection_name not in existing_collections:
+        await target_db.create_collection(collection_name)

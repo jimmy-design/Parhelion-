@@ -30,8 +30,10 @@ from database.mongodb import (
     purchase_order_collection,
     purchase_order_entries_collection,
     price_change_collection,
+    adjustment_collection,
     branch_collection,
     BRANCH_COLLECTION_CANDIDATES,
+    ensure_collection_exists,
     get_store_collection,
     get_store_database_name,
 )
@@ -50,6 +52,11 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="POS Backend API", version="1.0.2")
+
+
+@app.on_event("startup")
+async def ensure_required_mongo_collections():
+    await ensure_collection_exists("adjustments")
 
 
 class ERPItemCreate(BaseModel):
@@ -553,11 +560,46 @@ class ERPPriceChangeOut(BaseModel):
     items: List[ERPPriceChangeItemOut] = []
 
 
+class ERPAdjustmentCreate(BaseModel):
+    item: str
+    sku: Optional[str] = ""
+    quantity: float
+    reason: str = "Bin correction"
+    location: Optional[str] = "Warehouse A"
+    note: Optional[str] = ""
+    effective_date: Optional[str] = None
+    requested_by: Optional[str] = ""
+    approved_by: Optional[str] = ""
+    status: str = "Pending"
+    impact: Optional[str] = ""
+    store_id: int = 1
+
+
+class ERPAdjustmentOut(BaseModel):
+    id: str
+    adjustment_id: int
+    item: str
+    sku: str
+    quantity: float
+    reason: str
+    raisedBy: str
+    status: str
+    location: str
+    requestedAt: datetime
+    approvedBy: str = ""
+    note: str = ""
+    impact: str = ""
+    storeId: int = 1
+    effectiveDate: Optional[datetime] = None
+    lastUpdated: datetime
+
+
 PRICE_CHANGE_STATUSES = {"Draft", "Open", "Approved", "Applied", "Cancelled"}
 PRICE_CHANGE_SYNC_INTERVAL_SECONDS = 5
 _erp_branch_collection_name_cache: Optional[str] = None
 _last_price_change_sync_at: Optional[datetime] = None
 PRICE_CHANGE_NUMBER_EPSILON = 0.0001
+ADJUSTMENT_STATUSES = {"Pending", "Approved", "Posted"}
 
 
 def get_price_change_business_timezone():
@@ -1368,6 +1410,54 @@ def parse_optional_erp_datetime(value) -> Optional[datetime]:
         except ValueError:
             return None
     return None
+
+
+def normalize_adjustment_status(value: str) -> str:
+    normalized = str(value or "").strip().title()
+    return normalized if normalized in ADJUSTMENT_STATUSES else "Pending"
+
+
+def build_adjustment_reference(adjustment_id: int) -> str:
+    return f"ADJ-{int(adjustment_id or 0):04d}"
+
+
+def build_adjustment_impact(reason: str, quantity: float, location: str = "") -> str:
+    normalized_reason = str(reason or "").strip().lower()
+    normalized_location = str(location or "").strip()
+    location_suffix = f" in {normalized_location}" if normalized_location else ""
+
+    if float(quantity or 0) > 0:
+        return f"Pending intake confirmation before the added stock is released to available inventory{location_suffix}."
+
+    if "damage" in normalized_reason:
+        return f"Pending write-down approval before damaged units are posted out of stock{location_suffix}."
+
+    if "return" in normalized_reason:
+        return f"Pending quality review before the returned stock movement is finalized{location_suffix}."
+
+    return f"Pending supervisor confirmation before the stock movement is posted{location_suffix}."
+
+
+def map_adjustment_for_erp(doc: dict) -> ERPAdjustmentOut:
+    adjustment_id = int(doc.get("AdjustmentID", 0) or 0)
+    return ERPAdjustmentOut(
+        id=str(doc.get("Reference") or build_adjustment_reference(adjustment_id)),
+        adjustment_id=adjustment_id,
+        item=str(doc.get("Item", "") or ""),
+        sku=str(doc.get("SKU", "") or ""),
+        quantity=float(doc.get("Quantity", 0) or 0),
+        reason=str(doc.get("Reason", "") or ""),
+        raisedBy=str(doc.get("RequestedBy", doc.get("RaisedBy", "")) or ""),
+        status=normalize_adjustment_status(doc.get("Status", "Pending")),
+        location=str(doc.get("Location", "") or ""),
+        requestedAt=parse_erp_datetime(doc.get("RequestedAt")),
+        approvedBy=str(doc.get("ApprovedBy", "") or ""),
+        note=str(doc.get("Note", "") or ""),
+        impact=str(doc.get("Impact", "") or ""),
+        storeId=parse_price_change_store_id(doc.get("StoreID"), default=1),
+        effectiveDate=parse_optional_erp_datetime(doc.get("EffectiveDate")),
+        lastUpdated=parse_erp_datetime(doc.get("LastUpdated")),
+    )
 
 
 def build_price_change_item_doc(
@@ -2841,6 +2931,90 @@ async def list_erp_price_changes(
         [("Time", -1), ("ID", -1)]
     ).to_list(limit)
     return [map_price_change_for_erp(change) for change in changes]
+
+
+@app.get("/erp/adjustments", response_model=List[ERPAdjustmentOut])
+async def list_erp_adjustments(
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=2000),
+):
+    query = {}
+    if search:
+        regex = {"$regex": search, "$options": "i"}
+        query = {
+            "$or": [
+                {"Reference": regex},
+                {"Reason": regex},
+                {"Item": regex},
+                {"SKU": regex},
+                {"RequestedBy": regex},
+                {"Status": regex},
+                {"Location": regex},
+                {"Note": regex},
+                {"ApprovedBy": regex},
+            ]
+        }
+
+    adjustments = await adjustment_collection.find(query).sort(
+        [("RequestedAt", -1), ("AdjustmentID", -1)]
+    ).to_list(limit)
+    return [map_adjustment_for_erp(adjustment) for adjustment in adjustments]
+
+
+@app.post("/erp/adjustments", response_model=ERPAdjustmentOut, status_code=201)
+async def create_erp_adjustment(payload: ERPAdjustmentCreate):
+    item = str(payload.item or "").strip()
+    if not item:
+        raise HTTPException(status_code=400, detail="Item description is required")
+
+    try:
+        quantity = float(payload.quantity or 0)
+    except (TypeError, ValueError):
+        quantity = 0.0
+    if abs(quantity) <= 0:
+        raise HTTPException(status_code=400, detail="Adjustment quantity must be greater than zero")
+
+    now = datetime.utcnow()
+    last_adjustment = await adjustment_collection.find_one(
+        {"AdjustmentID": {"$type": "number"}},
+        sort=[("AdjustmentID", -1)],
+    )
+    next_id = int(last_adjustment.get("AdjustmentID", 0) or 0) + 1 if last_adjustment else 1
+
+    normalized_reason = str(payload.reason or "").strip() or "Bin correction"
+    normalized_location = str(payload.location or "").strip() or "Warehouse A"
+    normalized_status = normalize_adjustment_status(payload.status)
+    requested_by = str(payload.requested_by or "").strip()
+    approved_by = str(payload.approved_by or "").strip()
+    effective_date = parse_optional_erp_datetime(payload.effective_date)
+    impact = str(payload.impact or "").strip() or build_adjustment_impact(
+        normalized_reason,
+        quantity,
+        normalized_location,
+    )
+
+    adjustment_doc = {
+        "AdjustmentID": next_id,
+        "Reference": build_adjustment_reference(next_id),
+        "Item": item,
+        "SKU": str(payload.sku or "").strip(),
+        "Quantity": quantity,
+        "Reason": normalized_reason,
+        "RequestedBy": requested_by,
+        "Status": normalized_status,
+        "Location": normalized_location,
+        "RequestedAt": now,
+        "ApprovedBy": approved_by,
+        "Note": str(payload.note or "").strip(),
+        "Impact": impact,
+        "StoreID": parse_price_change_store_id(payload.store_id, default=1),
+        "EffectiveDate": effective_date,
+        "LastUpdated": now,
+    }
+
+    await adjustment_collection.insert_one(adjustment_doc)
+    created = await adjustment_collection.find_one({"AdjustmentID": next_id})
+    return map_adjustment_for_erp(created)
 
 
 @app.get("/erp/price-changes/history/{lookup_code}", response_model=List[ERPPriceChangeHistoryRow])

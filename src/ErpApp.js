@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./ErpApp.css";
 import PriceChangeWorkspace from "./PriceChangeWorkspace";
+import AdjustmentsWorkspace from "./AdjustmentsWorkspace";
 import {
   LayoutDashboard,
   BriefcaseBusiness,
@@ -116,6 +117,28 @@ const EMPTY_PRICE_CHANGE_PRICE = {
   upperBound: "0",
 };
 const PRICE_CHANGE_PRICE_FIELDS = Object.keys(EMPTY_PRICE_CHANGE_PRICE);
+const INITIAL_ADJUSTMENT_RECORDS = [];
+
+function createInitialAdjustmentsActionRequest() {
+  return { type: "idle", nonce: 0 };
+}
+
+function matchesAdjustmentSearch(adjustment, searchTerm) {
+  const normalizedSearch = String(searchTerm || "").trim().toLowerCase();
+  if (!normalizedSearch) return true;
+
+  return [
+    adjustment?.id,
+    adjustment?.reason,
+    adjustment?.item,
+    adjustment?.sku,
+    adjustment?.raisedBy,
+    adjustment?.status,
+    adjustment?.location,
+    adjustment?.note,
+    adjustment?.approvedBy,
+  ].some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
+}
 
 function parsePriceChangeStoreId(value, fallbackStoreId = 0) {
   const normalizedStoreId = Number(value);
@@ -1495,6 +1518,14 @@ function ErpApp({ currentUser, onLogout }) {
   const [priceChangesRecords, setPriceChangesRecords] = useState([]);
   const [priceChangesLoading, setPriceChangesLoading] = useState(false);
   const [priceChangesError, setPriceChangesError] = useState("");
+  const [adjustmentsRecords, setAdjustmentsRecords] = useState(() => INITIAL_ADJUSTMENT_RECORDS);
+  const [adjustmentsLoading, setAdjustmentsLoading] = useState(false);
+  const [adjustmentsError, setAdjustmentsError] = useState("");
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
+  const [selectedAdjustmentId, setSelectedAdjustmentId] = useState(null);
+  const [adjustmentsActionRequest, setAdjustmentsActionRequest] = useState(
+    createInitialAdjustmentsActionRequest
+  );
   const [selectedPriceChangeId, setSelectedPriceChangeId] = useState(null);
   const [priceChangeComposerMode, setPriceChangeComposerMode] = useState("view");
   const [priceChangeBranches, setPriceChangeBranches] = useState([]);
@@ -1606,6 +1637,7 @@ function ErpApp({ currentUser, onLogout }) {
   const isStockOverviewView = activeNav === "inventory" && activeInventoryTab === "stock-overview";
   const isPurchaseOrdersView = activeNav === "inventory" && activeInventoryTab === "purchase-orders";
   const isReorderView = activeNav === "inventory" && activeInventoryTab === "reorder";
+  const isAdjustmentsView = activeNav === "inventory" && activeInventoryTab === "adjustments";
   const isPriceChangeView = activeNav === "inventory" && activeInventoryTab === "price-change";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
@@ -2068,6 +2100,13 @@ function ErpApp({ currentUser, onLogout }) {
       ) || null,
     [itemsRecords, selectedInventoryItemLookupCode]
   );
+  const selectedAdjustmentRecord = useMemo(
+    () =>
+      adjustmentsRecords.find(
+        (adjustment) => String(adjustment.id || "") === String(selectedAdjustmentId || "")
+      ) || null,
+    [adjustmentsRecords, selectedAdjustmentId]
+  );
   const selectedPriceChangeRecord = useMemo(
     () =>
       priceChangesRecords.find(
@@ -2317,6 +2356,31 @@ function ErpApp({ currentUser, onLogout }) {
       ? priceChangesTableData
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
   const selectedWorkspaceData = isInventoryWorkspace ? selectedInventoryData : selectedManagementData;
+  const filteredAdjustmentsRecords = useMemo(
+    () => adjustmentsRecords.filter((adjustment) => matchesAdjustmentSearch(adjustment, searchTerm)),
+    [adjustmentsRecords, searchTerm]
+  );
+  const adjustmentItemSuggestions = useMemo(() => {
+    const suggestions = new Map();
+
+    itemsRecords.forEach((item) => {
+      const itemName = String(item.description || "").trim();
+      const sku = String(item.lookup_code || "").trim();
+      const key = `${sku}|${itemName}`;
+      if (!itemName || suggestions.has(key)) return;
+      suggestions.set(key, { item: itemName, sku });
+    });
+
+    adjustmentsRecords.forEach((adjustment) => {
+      const itemName = String(adjustment.item || "").trim();
+      const sku = String(adjustment.sku || "").trim();
+      const key = `${sku}|${itemName}`;
+      if (!itemName || suggestions.has(key)) return;
+      suggestions.set(key, { item: itemName, sku });
+    });
+
+    return Array.from(suggestions.values()).slice(0, 8);
+  }, [itemsRecords, adjustmentsRecords]);
   const filteredManagementRows = (selectedManagementData?.rows || []).filter((row) =>
     row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -2335,6 +2399,8 @@ function ErpApp({ currentUser, onLogout }) {
     ? filteredSuppliersRecords.length
     : isPurchaseOrdersView
     ? filteredPurchaseOrdersRecords.length
+    : isAdjustmentsView
+    ? filteredAdjustmentsRecords.length
     : isPriceChangeView
     ? filteredPriceChangesRecords.length
     : isUsersView
@@ -2354,6 +2420,7 @@ function ErpApp({ currentUser, onLogout }) {
   const pagedItemsRecords = filteredItemsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedSuppliersRecords = filteredSuppliersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPurchaseOrdersRecords = filteredPurchaseOrdersRecords.slice(startIndex, startIndex + rowsPerPage);
+  const pagedAdjustmentsRecords = filteredAdjustmentsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPriceChangesRecords = filteredPriceChangesRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedUsersRecords = filteredUsersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedCategoriesRecords = filteredCategoriesRecords.slice(startIndex, startIndex + rowsPerPage);
@@ -2375,6 +2442,63 @@ function ErpApp({ currentUser, onLogout }) {
 
   const dismissAlert = (id) => {
     setAlerts((prev) => prev.filter((alert) => alert.id !== id));
+  };
+
+  const handleSaveAdjustment = async (draft) => {
+    const item = String(draft?.item || "").trim();
+    const sku = String(draft?.sku || "").trim();
+    const quantity = Number(draft?.quantity || 0);
+    const reason = String(draft?.reason || "Bin correction").trim() || "Bin correction";
+    const location = String(draft?.location || "Warehouse A").trim() || "Warehouse A";
+    const note = String(draft?.note || "").trim();
+
+    if (!item) {
+      pushAlert("warning", "Item description is required for an adjustment.");
+      return null;
+    }
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      pushAlert("warning", "Adjustment quantity must be greater than zero.");
+      return null;
+    }
+
+    const isInbound = String(draft?.direction || "out") === "in";
+    const normalizedQuantity = Number((quantity * (isInbound ? 1 : -1)).toFixed(2));
+
+    setSavingAdjustment(true);
+    try {
+      const saved = await fetchJsonWithFallback(
+        "/erp/adjustments",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            item,
+            sku,
+            quantity: normalizedQuantity,
+            reason,
+            location,
+            note,
+            effective_date: formatDateInputValue(draft?.effectiveDate) || null,
+            requested_by: String(draft?.requestedBy || currentUserLabel || "").trim() || currentUserLabel,
+            status: "Pending",
+            store_id: Number(currentUser?.store_id || 1),
+          }),
+        },
+        "Failed to save adjustment"
+      );
+
+      setSelectedAdjustmentId(saved?.id || null);
+      setCurrentPage(1);
+      await loadAdjustments(searchTerm);
+      pushAlert("success", `Adjustment ${saved?.id || ""} created for ${item}.`);
+      return saved;
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to save adjustment.");
+      return null;
+    } finally {
+      setSavingAdjustment(false);
+    }
   };
 
   const closeInventoryItemPropertiesModal = () => {
@@ -2743,6 +2867,27 @@ function ErpApp({ currentUser, onLogout }) {
     }));
   };
 
+  const loadAdjustments = async (search = "") => {
+    setAdjustmentsLoading(true);
+    setAdjustmentsError("");
+    try {
+      const query = search.trim()
+        ? `?search=${encodeURIComponent(search.trim())}`
+        : "";
+      const data = await fetchJsonWithFallback(
+        `/erp/adjustments${query}`,
+        undefined,
+        "Failed to load adjustments"
+      );
+      setAdjustmentsRecords(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setAdjustmentsRecords([]);
+      setAdjustmentsError(error.message || "Failed to load adjustments");
+    } finally {
+      setAdjustmentsLoading(false);
+    }
+  };
+
   const loadPriceChanges = async (search = "") => {
     setPriceChangesLoading(true);
     setPriceChangesError("");
@@ -3095,6 +3240,17 @@ function ErpApp({ currentUser, onLogout }) {
       }
       if (actionLabel === "Refresh") {
         loadPurchaseOrders(searchTerm);
+        return;
+      }
+    }
+
+    if (selectedInventoryTab.id === "adjustments") {
+      if (actionLabel === "New Adjustment") {
+        setAdjustmentsActionRequest((prev) => ({ type: "create", nonce: prev.nonce + 1 }));
+        return;
+      }
+      if (actionLabel === "Export Log") {
+        setAdjustmentsActionRequest((prev) => ({ type: "export", nonce: prev.nonce + 1 }));
         return;
       }
     }
@@ -4654,6 +4810,16 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isPurchaseOrdersView, searchTerm]);
 
   useEffect(() => {
+    if (!isAdjustmentsView) return;
+
+    const timer = setTimeout(() => {
+      loadAdjustments(searchTerm);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [isAdjustmentsView, searchTerm]);
+
+  useEffect(() => {
     if (!isPriceChangeView) return;
 
     const timer = setTimeout(() => {
@@ -4718,6 +4884,33 @@ function ErpApp({ currentUser, onLogout }) {
 
     return () => window.clearTimeout(timer);
   }, [isPriceChangeView, priceChangeComposerMode]);
+
+  useEffect(() => {
+    if (!isAdjustmentsView || selectedAdjustmentId === null) return;
+    if (selectedAdjustmentRecord) return;
+    setSelectedAdjustmentId(null);
+  }, [isAdjustmentsView, selectedAdjustmentId, selectedAdjustmentRecord]);
+
+  useEffect(() => {
+    if (!isAdjustmentsView) return;
+    if (!filteredAdjustmentsRecords.length) {
+      if (selectedAdjustmentId !== null) {
+        setSelectedAdjustmentId(null);
+      }
+      return;
+    }
+
+    if (
+      selectedAdjustmentId !== null &&
+      filteredAdjustmentsRecords.some(
+        (adjustment) => String(adjustment.id || "") === String(selectedAdjustmentId)
+      )
+    ) {
+      return;
+    }
+
+    setSelectedAdjustmentId(filteredAdjustmentsRecords[0].id);
+  }, [isAdjustmentsView, filteredAdjustmentsRecords, selectedAdjustmentId]);
 
   useEffect(() => {
     if (!isSuppliersView || selectedSupplierId === null) return;
@@ -5102,6 +5295,8 @@ function ErpApp({ currentUser, onLogout }) {
                 {isSuppliersView && suppliersError && <p className="erp-table-status erp-table-status-error">{suppliersError}</p>}
                 {isPurchaseOrdersView && purchaseOrdersLoading && <p className="erp-table-status">Loading purchase orders...</p>}
                 {isPurchaseOrdersView && purchaseOrdersError && <p className="erp-table-status erp-table-status-error">{purchaseOrdersError}</p>}
+                {isAdjustmentsView && adjustmentsLoading && <p className="erp-table-status">Loading adjustments...</p>}
+                {isAdjustmentsView && adjustmentsError && <p className="erp-table-status erp-table-status-error">{adjustmentsError}</p>}
                 {isPriceChangeView && priceChangesLoading && <p className="erp-table-status">Loading price changes...</p>}
                 {isPriceChangeView && priceChangesError && <p className="erp-table-status erp-table-status-error">{priceChangesError}</p>}
                 {isUsersView && usersLoading && <p className="erp-table-status">Loading users...</p>}
@@ -5170,6 +5365,31 @@ function ErpApp({ currentUser, onLogout }) {
                     onPrevPage={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                     onNextPage={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
                     tableWrapRef={tableWrapRef}
+                  />
+                ) : isAdjustmentsView ? (
+                  <AdjustmentsWorkspace
+                    records={pagedAdjustmentsRecords}
+                    summaryRecords={filteredAdjustmentsRecords}
+                    totalRecords={totalRecords}
+                    selectedAdjustmentId={selectedAdjustmentId}
+                    onSelectAdjustment={setSelectedAdjustmentId}
+                    onSaveAdjustment={handleSaveAdjustment}
+                    currentUserLabel={currentUserLabel}
+                    itemSuggestions={adjustmentItemSuggestions}
+                    saving={savingAdjustment}
+                    rowsPerPage={rowsPerPage}
+                    pageOptions={tablePageSizeOptions}
+                    onRowsPerPageChange={(nextValue) =>
+                      setRowsPerPage(Number(nextValue) || TABLE_PAGE_SIZE_OPTIONS[0])
+                    }
+                    pageStartRecord={pageStartRecord}
+                    pageEndRecord={pageEndRecord}
+                    safePage={safePage}
+                    totalPages={totalPages}
+                    onPrevPage={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    onNextPage={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    actionRequest={adjustmentsActionRequest}
+                    onNotify={pushAlert}
                   />
                 ) : (
                 <div className={`erp-table-region ${isSuppliersView ? "erp-supplier-view-layout" : ""}`.trim()}>
