@@ -268,15 +268,47 @@ export default function AdjustmentsWorkspace({
     setDraft(createDraft(currentUserLabel));
   };
 
+  const statCards = [
+    {
+      id: "pending",
+      label: "Pending",
+      value: summary.pendingCount,
+      hint: "Need review before posting",
+      tone: "is-warning",
+    },
+    {
+      id: "approved",
+      label: "Approved",
+      value: summary.approvedCount,
+      hint: "Awaiting final stock post",
+      tone: "is-info",
+    },
+    {
+      id: "posted",
+      label: "Posted",
+      value: summary.postedCount,
+      hint: "Already reflected in stock",
+      tone: "is-success",
+    },
+    {
+      id: "net-units",
+      label: "Net Units",
+      value: formatSignedQuantity(summary.netUnits),
+      hint: "Current movement balance",
+      tone:
+        summary.netUnits < 0 ? "is-negative" : summary.netUnits > 0 ? "is-positive" : "is-neutral",
+    },
+  ];
+
   return (
     <div className="erp-adjustments-layout">
       <section className="erp-adjustments-hero">
         <div className="erp-adjustments-hero-copy">
           <span className="erp-adjustments-hero-eyebrow">Inventory Control</span>
-          <h3>Adjustments with clarity, approval context, and audit-ready movement trails.</h3>
+          <h3>Stock Adjustments</h3>
           <p>
-            Keep stock corrections visible at a glance with structured movement cards,
-            approval cues, and a capture lane for new adjustment drafts.
+            Keep stock corrections visible in one place with clear approval context, movement
+            summaries, and a fast capture lane for new entries.
           </p>
 
           <div className="erp-adjustments-signal-row">
@@ -301,53 +333,46 @@ export default function AdjustmentsWorkspace({
             <strong>{selectedRecord?.item || "No adjustment selected"}</strong>
             <p>
               {selectedRecord
-                ? `${selectedRecord.reason} at ${selectedRecord.location}`
+                ? `Raised by ${selectedRecord.raisedBy} on ${formatDateTime(selectedRecord.requestedAt)}`
                 : "Select an entry below to inspect its movement trail and approval details."}
             </p>
             {selectedRecord && (
-              <div className="erp-adjustments-focus-main">
-                <span
-                  className={`erp-adjustment-row-qty ${
-                    Number(selectedRecord.quantity || 0) >= 0 ? "is-positive" : "is-negative"
-                  }`}
-                >
-                  {Number(selectedRecord.quantity || 0) >= 0 ? (
-                    <ArrowUpRight size={14} />
-                  ) : (
-                    <ArrowDownRight size={14} />
-                  )}
-                  {formatSignedQuantity(selectedRecord.quantity)}
-                </span>
-                <span className={`erp-adjustment-pill is-status ${getStatusTone(selectedRecord.status)}`}>
-                  {selectedRecord.status}
-                </span>
-              </div>
+              <>
+                <div className="erp-adjustments-focus-tags">
+                  <span className="erp-adjustments-focus-tag">{selectedRecord.reason}</span>
+                  <span className="erp-adjustments-focus-tag">{selectedRecord.location}</span>
+                </div>
+                <div className="erp-adjustments-focus-main">
+                  <span
+                    className={`erp-adjustment-row-qty ${
+                      Number(selectedRecord.quantity || 0) >= 0 ? "is-positive" : "is-negative"
+                    }`}
+                  >
+                    {Number(selectedRecord.quantity || 0) >= 0 ? (
+                      <ArrowUpRight size={14} />
+                    ) : (
+                      <ArrowDownRight size={14} />
+                    )}
+                    {formatSignedQuantity(selectedRecord.quantity)}
+                  </span>
+                  <span className={`erp-adjustment-pill is-status ${getStatusTone(selectedRecord.status)}`}>
+                    {selectedRecord.status}
+                  </span>
+                </div>
+              </>
             )}
           </div>
         </div>
       </section>
 
       <section className="erp-adjustments-stats">
-        <article className="erp-adjustments-stat-card">
-          <span className="erp-adjustments-stat-label">Pending</span>
-          <strong className="erp-adjustments-stat-value">{summary.pendingCount}</strong>
-          <small className="erp-adjustments-stat-trend">Need review before posting</small>
-        </article>
-        <article className="erp-adjustments-stat-card">
-          <span className="erp-adjustments-stat-label">Approved</span>
-          <strong className="erp-adjustments-stat-value">{summary.approvedCount}</strong>
-          <small className="erp-adjustments-stat-trend">Awaiting final stock post</small>
-        </article>
-        <article className="erp-adjustments-stat-card">
-          <span className="erp-adjustments-stat-label">Posted</span>
-          <strong className="erp-adjustments-stat-value">{summary.postedCount}</strong>
-          <small className="erp-adjustments-stat-trend">Already reflected in stock</small>
-        </article>
-        <article className="erp-adjustments-stat-card">
-          <span className="erp-adjustments-stat-label">Net Units</span>
-          <strong className="erp-adjustments-stat-value">{formatSignedQuantity(summary.netUnits)}</strong>
-          <small className="erp-adjustments-stat-trend">Current movement balance</small>
-        </article>
+        {statCards.map((card) => (
+          <article key={card.id} className={`erp-adjustments-stat-card ${card.tone}`.trim()}>
+            <span className="erp-adjustments-stat-label">{card.label}</span>
+            <strong className="erp-adjustments-stat-value">{card.value}</strong>
+            <small className="erp-adjustments-stat-trend">{card.hint}</small>
+          </article>
+        ))}
       </section>
 
       <div className="erp-adjustments-content">
