@@ -472,69 +472,6 @@ export default function AdjustmentsWorkspace({
         </section>
 
         <div className="erp-adjustments-side-stack">
-          <section className="erp-adjustments-panel">
-            <div className="erp-adjustments-panel-head">
-              <div className="erp-adjustments-panel-title">
-                <h4>Selected Detail</h4>
-                <p>Approval and stock impact snapshot</p>
-              </div>
-            </div>
-
-            {selectedRecord ? (
-              <div className="erp-adjustments-detail-stack">
-                <div className="erp-adjustments-detail-grid">
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Movement</span>
-                    <strong className="erp-adjustments-detail-value">
-                      {formatSignedQuantity(selectedRecord.quantity)} units
-                    </strong>
-                    <small>{selectedRecord.location}</small>
-                  </article>
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Raised By</span>
-                    <strong className="erp-adjustments-detail-value">{selectedRecord.raisedBy}</strong>
-                    <small>{formatDateTime(selectedRecord.requestedAt)}</small>
-                  </article>
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Status</span>
-                    <strong className="erp-adjustments-detail-value">{selectedRecord.status}</strong>
-                    <small>
-                      {selectedRecord.approvedBy
-                        ? `Reviewed by ${selectedRecord.approvedBy}`
-                        : "Waiting for reviewer"}
-                    </small>
-                  </article>
-                </div>
-
-                <div className="erp-adjustments-detail-note">
-                  <span className="erp-adjustments-detail-label">Audit Note</span>
-                  <p>{selectedRecord.note || "No note attached to this adjustment."}</p>
-                </div>
-
-                <div className="erp-adjustments-timeline">
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Request captured</strong>
-                    <span>{formatDateTime(selectedRecord.requestedAt)}</span>
-                  </div>
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Approval owner</strong>
-                    <span>{selectedRecord.approvedBy || "Awaiting assignment"}</span>
-                  </div>
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Stock posture</strong>
-                    <span>{selectedRecord.impact || "Impact note not yet captured"}</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="erp-adjustment-empty">
-                <CheckCircle2 size={20} />
-                <strong>No entry selected</strong>
-                <p>Choose an adjustment card to see the approval trail and supporting note.</p>
-              </div>
-            )}
-          </section>
-
           <section ref={formPanelRef} className="erp-adjustments-panel">
             <div className="erp-adjustments-panel-head">
               <div className="erp-adjustments-panel-title">
@@ -685,6 +622,69 @@ export default function AdjustmentsWorkspace({
                 </button>
               </div>
             </form>
+          </section>
+
+          <section className="erp-adjustments-panel">
+            <div className="erp-adjustments-panel-head">
+              <div className="erp-adjustments-panel-title">
+                <h4>Selected Detail</h4>
+                <p>Approval and stock impact snapshot</p>
+              </div>
+            </div>
+
+            {selectedRecord ? (
+              <div className="erp-adjustments-detail-stack">
+                <div className="erp-adjustments-detail-grid">
+                  <article className="erp-adjustments-detail-card">
+                    <span className="erp-adjustments-detail-label">Movement</span>
+                    <strong className="erp-adjustments-detail-value">
+                      {formatSignedQuantity(selectedRecord.quantity)} units
+                    </strong>
+                    <small>{selectedRecord.location}</small>
+                  </article>
+                  <article className="erp-adjustments-detail-card">
+                    <span className="erp-adjustments-detail-label">Raised By</span>
+                    <strong className="erp-adjustments-detail-value">{selectedRecord.raisedBy}</strong>
+                    <small>{formatDateTime(selectedRecord.requestedAt)}</small>
+                  </article>
+                  <article className="erp-adjustments-detail-card">
+                    <span className="erp-adjustments-detail-label">Status</span>
+                    <strong className="erp-adjustments-detail-value">{selectedRecord.status}</strong>
+                    <small>
+                      {selectedRecord.approvedBy
+                        ? `Reviewed by ${selectedRecord.approvedBy}`
+                        : "Waiting for reviewer"}
+                    </small>
+                  </article>
+                </div>
+
+                <div className="erp-adjustments-detail-note">
+                  <span className="erp-adjustments-detail-label">Audit Note</span>
+                  <p>{selectedRecord.note || "No note attached to this adjustment."}</p>
+                </div>
+
+                <div className="erp-adjustments-timeline">
+                  <div className="erp-adjustments-timeline-item">
+                    <strong>Request captured</strong>
+                    <span>{formatDateTime(selectedRecord.requestedAt)}</span>
+                  </div>
+                  <div className="erp-adjustments-timeline-item">
+                    <strong>Approval owner</strong>
+                    <span>{selectedRecord.approvedBy || "Awaiting assignment"}</span>
+                  </div>
+                  <div className="erp-adjustments-timeline-item">
+                    <strong>Stock posture</strong>
+                    <span>{selectedRecord.impact || "Impact note not yet captured"}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="erp-adjustment-empty">
+                <CheckCircle2 size={20} />
+                <strong>No entry selected</strong>
+                <p>Choose an adjustment card to see the approval trail and supporting note.</p>
+              </div>
+            )}
           </section>
         </div>
       </div>
