@@ -685,7 +685,18 @@ async function authenticateWithFingerprint(options = {}) {
 }
 
 function getWindowsAppId(appVariant) {
-  return appVariant === "erp" ? "com.eastmatt.erp" : "com.eastmatt.pos";
+  const baseId = appVariant === "erp" ? "com.eastmatt.erp" : "com.eastmatt.pos";
+  return app.isPackaged ? baseId : `${baseId}.dev`;
+}
+
+function configureRuntimeIdentity(appVariant) {
+  if (app.isPackaged) {
+    return;
+  }
+
+  const baseName = appVariant === "erp" ? "ParhelionERP" : "ParhelionPOS";
+  app.setName(`${baseName} Dev`);
+  app.setPath("userData", path.join(app.getPath("appData"), `${baseName}-dev`));
 }
 
 function getWindowIconPath() {
@@ -776,12 +787,14 @@ function createWindow(appVariant) {
   }
 
   if (app.isPackaged) {
+    console.log(`Loading packaged renderer: build/index.html?app=${appVariant}`);
     win.loadFile(path.join(__dirname, "..", "build", "index.html"), {
       query: { app: appVariant },
     });
     return win;
   }
 
+  console.log(`Loading development renderer: http://localhost:3000/?app=${appVariant}`);
   win.loadURL(`http://localhost:3000/?app=${appVariant}`);
   return win;
 }
@@ -828,6 +841,8 @@ function registerIpcHandlers() {
 }
 
 function bootstrap(appVariant) {
+  configureRuntimeIdentity(appVariant);
+
   const gotSingleInstanceLock = app.requestSingleInstanceLock();
   if (!gotSingleInstanceLock) {
     app.quit();

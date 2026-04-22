@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./ErpApp.css";
 import PriceChangeWorkspace from "./PriceChangeWorkspace";
 import AdjustmentsWorkspace from "./AdjustmentsWorkspace";
+import ErpCustomSelect from "./ErpCustomSelect";
 import {
   LayoutDashboard,
   BriefcaseBusiness,
@@ -25,8 +26,6 @@ import {
   Minimize2,
   Maximize2,
   X,
-  ChevronDown,
-  Check,
   CheckCircle2,
   AlertCircle,
   TriangleAlert,
@@ -123,13 +122,76 @@ function createInitialAdjustmentsActionRequest() {
   return { type: "idle", nonce: 0 };
 }
 
-function matchesAdjustmentSearch(adjustment, searchTerm) {
-  const normalizedSearch = String(searchTerm || "").trim().toLowerCase();
-  if (!normalizedSearch) return true;
+function normalizeAdjustmentLedgerSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
 
-  return [
+function resolveAdjustmentSearchContext(searchTerm, itemsRecords) {
+  const rawSearch = String(searchTerm || "").trim();
+  const normalizedSearch = normalizeAdjustmentLedgerSearch(rawSearch);
+  if (!normalizedSearch) {
+    return {
+      backendSearch: "",
+      terms: [],
+    };
+  }
+
+  const catalog = Array.isArray(itemsRecords) ? itemsRecords : [];
+  const exactMatch =
+    catalog.find((item) => {
+      const lookupCode = normalizeAdjustmentLedgerSearch(item?.lookup_code);
+      const barcode = normalizeAdjustmentLedgerSearch(item?.alias);
+      const description = normalizeAdjustmentLedgerSearch(item?.description);
+      return (
+        normalizedSearch === lookupCode ||
+        normalizedSearch === barcode ||
+        normalizedSearch === description
+      );
+    }) || null;
+
+  const partialMatches = exactMatch
+    ? []
+    : catalog.filter((item) => {
+        const lookupCode = normalizeAdjustmentLedgerSearch(item?.lookup_code);
+        const barcode = normalizeAdjustmentLedgerSearch(item?.alias);
+        const description = normalizeAdjustmentLedgerSearch(item?.description);
+        return (
+          lookupCode.includes(normalizedSearch) ||
+          barcode.includes(normalizedSearch) ||
+          description.includes(normalizedSearch)
+        );
+      });
+
+  const matchedItem = exactMatch || (partialMatches.length === 1 ? partialMatches[0] : null);
+  if (!matchedItem) {
+    return {
+      backendSearch: rawSearch,
+      terms: [normalizedSearch],
+    };
+  }
+
+  const matchedLookupCode = normalizeAdjustmentLedgerSearch(matchedItem?.lookup_code);
+  const matchedBarcode = normalizeAdjustmentLedgerSearch(matchedItem?.alias);
+  const matchedDescription = normalizeAdjustmentLedgerSearch(matchedItem?.description);
+  const searchIsBarcode = Boolean(matchedBarcode) && normalizedSearch === matchedBarcode;
+  const backendSearch = searchIsBarcode
+    ? String(matchedItem?.description || matchedItem?.lookup_code || rawSearch).trim()
+    : rawSearch;
+
+  return {
+    backendSearch,
+    terms: Array.from(
+      new Set([normalizedSearch, matchedLookupCode, matchedDescription].filter(Boolean))
+    ),
+  };
+}
+
+function matchesAdjustmentSearch(adjustment, searchContext) {
+  const terms = Array.isArray(searchContext?.terms) ? searchContext.terms : [];
+  if (!terms.length) return true;
+
+  const searchableValues = [
     adjustment?.id,
-    adjustment?.reason,
     adjustment?.item,
     adjustment?.sku,
     adjustment?.raisedBy,
@@ -137,7 +199,12 @@ function matchesAdjustmentSearch(adjustment, searchTerm) {
     adjustment?.location,
     adjustment?.note,
     adjustment?.approvedBy,
-  ].some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
+    adjustment?.reason,
+  ].map((value) => normalizeAdjustmentLedgerSearch(value));
+
+  return terms.some((term) =>
+    searchableValues.some((value) => value.includes(term))
+  );
 }
 
 function parsePriceChangeStoreId(value, fallbackStoreId = 0) {
@@ -1058,95 +1125,6 @@ function formatTransferSpeed(bytesPerSecond) {
   }
 
   return `${Math.round(size)} B/s`;
-}
-
-function ErpCustomSelect({
-  value,
-  onChange,
-  options,
-  placeholder = "Select option",
-  disabled = false,
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef(null);
-  const listboxIdRef = useRef(`erp-custom-select-${Math.random().toString(36).slice(2, 10)}`);
-
-  const selectedOption = options.find((option) => String(option.value) === String(value)) || null;
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-
-    const handlePointerDown = (event) => {
-      if (!containerRef.current?.contains(event.target)) {
-        setIsOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen]);
-
-  return (
-    <div
-      ref={containerRef}
-      className={`erp-custom-select ${isOpen ? "is-open" : ""} ${disabled ? "is-disabled" : ""}`.trim()}
-    >
-      <button
-        type="button"
-        className="erp-custom-select-trigger"
-        onClick={() => {
-          if (!disabled) {
-            setIsOpen((prev) => !prev);
-          }
-        }}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-controls={listboxIdRef.current}
-        disabled={disabled}
-      >
-        <span
-          className={`erp-custom-select-value ${selectedOption ? "" : "is-placeholder"}`.trim()}
-        >
-          {selectedOption?.label || placeholder}
-        </span>
-        <ChevronDown size={16} className="erp-custom-select-icon" />
-      </button>
-      {isOpen && (
-        <div className="erp-custom-select-menu" id={listboxIdRef.current} role="listbox">
-          {options.map((option) => {
-            const isSelected = String(option.value) === String(value);
-            return (
-              <button
-                key={`${listboxIdRef.current}-${option.value}`}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                className={`erp-custom-select-option ${isSelected ? "is-selected" : ""}`.trim()}
-                onClick={() => {
-                  onChange(option.value);
-                  setIsOpen(false);
-                }}
-              >
-                <span>{option.label}</span>
-                {isSelected && <Check size={14} className="erp-custom-select-check" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
 }
 
 const ERP_API_BASES = Array.from(new Set([API_BASE_URL])).filter(Boolean);
@@ -2356,31 +2334,18 @@ function ErpApp({ currentUser, onLogout }) {
       ? priceChangesTableData
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
   const selectedWorkspaceData = isInventoryWorkspace ? selectedInventoryData : selectedManagementData;
-  const filteredAdjustmentsRecords = useMemo(
-    () => adjustmentsRecords.filter((adjustment) => matchesAdjustmentSearch(adjustment, searchTerm)),
-    [adjustmentsRecords, searchTerm]
+  const adjustmentsSearchContext = useMemo(
+    () => resolveAdjustmentSearchContext(searchTerm, itemsRecords),
+    [searchTerm, itemsRecords]
   );
-  const adjustmentItemSuggestions = useMemo(() => {
-    const suggestions = new Map();
-
-    itemsRecords.forEach((item) => {
-      const itemName = String(item.description || "").trim();
-      const sku = String(item.lookup_code || "").trim();
-      const key = `${sku}|${itemName}`;
-      if (!itemName || suggestions.has(key)) return;
-      suggestions.set(key, { item: itemName, sku });
-    });
-
-    adjustmentsRecords.forEach((adjustment) => {
-      const itemName = String(adjustment.item || "").trim();
-      const sku = String(adjustment.sku || "").trim();
-      const key = `${sku}|${itemName}`;
-      if (!itemName || suggestions.has(key)) return;
-      suggestions.set(key, { item: itemName, sku });
-    });
-
-    return Array.from(suggestions.values()).slice(0, 8);
-  }, [itemsRecords, adjustmentsRecords]);
+  const adjustmentsSearchQuery = adjustmentsSearchContext.backendSearch;
+  const filteredAdjustmentsRecords = useMemo(
+    () =>
+      adjustmentsRecords.filter((adjustment) =>
+        matchesAdjustmentSearch(adjustment, adjustmentsSearchContext)
+      ),
+    [adjustmentsRecords, adjustmentsSearchContext]
+  );
   const filteredManagementRows = (selectedManagementData?.rows || []).filter((row) =>
     row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -2490,7 +2455,7 @@ function ErpApp({ currentUser, onLogout }) {
 
       setSelectedAdjustmentId(saved?.id || null);
       setCurrentPage(1);
-      await loadAdjustments(searchTerm);
+      await loadAdjustments(adjustmentsSearchQuery);
       pushAlert("success", `Adjustment ${saved?.id || ""} created for ${item}.`);
       return saved;
     } catch (error) {
@@ -4748,6 +4713,11 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isItemsView, categoryOptionsRecords.length, categoryOptionsLoading]);
 
   useEffect(() => {
+    if (!isAdjustmentsView || itemsRecords.length || itemsLoading) return;
+    loadItems("");
+  }, [isAdjustmentsView, itemsRecords.length, itemsLoading]);
+
+  useEffect(() => {
     if (!isSuppliersView) return;
 
     const timer = setTimeout(() => {
@@ -4813,11 +4783,11 @@ function ErpApp({ currentUser, onLogout }) {
     if (!isAdjustmentsView) return;
 
     const timer = setTimeout(() => {
-      loadAdjustments(searchTerm);
+      loadAdjustments(adjustmentsSearchQuery);
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [isAdjustmentsView, searchTerm]);
+  }, [isAdjustmentsView, adjustmentsSearchQuery]);
 
   useEffect(() => {
     if (!isPriceChangeView) return;
@@ -5375,7 +5345,7 @@ function ErpApp({ currentUser, onLogout }) {
                     onSelectAdjustment={setSelectedAdjustmentId}
                     onSaveAdjustment={handleSaveAdjustment}
                     currentUserLabel={currentUserLabel}
-                    itemSuggestions={adjustmentItemSuggestions}
+                    inventoryItems={itemsRecords}
                     saving={savingAdjustment}
                     rowsPerPage={rowsPerPage}
                     pageOptions={tablePageSizeOptions}
@@ -5393,27 +5363,28 @@ function ErpApp({ currentUser, onLogout }) {
                   />
                 ) : (
                 <div className={`erp-table-region ${isSuppliersView ? "erp-supplier-view-layout" : ""}`.trim()}>
-                  <div className={`${isSuppliersView ? "erp-supplier-main " : ""}erp-table-layout`.trim()}>
-                <div className="erp-table-wrap" ref={tableWrapRef}>
-                  <table
-                    className={`erp-data-table ${isUsersView ? "is-users-table" : ""} ${
-                      isItemsView ? "is-items-table" : ""
-                    } ${
-                      isSuppliersView ? "is-suppliers-table" : ""
-                    } ${isStockOverviewView ? "is-stock-overview-table" : ""} ${
-                      isReorderView ? "is-reorder-table" : ""
-                    }`.trim()}
-                  >
-                    <thead>
-                      <tr>
-                        {selectedWorkspaceData.columns.map((column) => (
-                          <th key={column}>{column}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isItemsView
-                        ? pagedItemsRecords.map((item, rowIndex) => {
+                <div className={`${isSuppliersView ? "erp-supplier-main " : ""}erp-table-layout`.trim()}>
+                <div className="erp-table-shell">
+                  <div className="erp-table-wrap" ref={tableWrapRef}>
+                    <table
+                      className={`erp-data-table ${isUsersView ? "is-users-table" : ""} ${
+                        isItemsView ? "is-items-table" : ""
+                      } ${
+                        isSuppliersView ? "is-suppliers-table" : ""
+                      } ${isStockOverviewView ? "is-stock-overview-table" : ""} ${
+                        isReorderView ? "is-reorder-table" : ""
+                      }`.trim()}
+                    >
+                      <thead>
+                        <tr>
+                          {selectedWorkspaceData.columns.map((column) => (
+                            <th key={column}>{column}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {isItemsView
+                          ? pagedItemsRecords.map((item, rowIndex) => {
                           const stockAvailable = Number(item.stock_available ?? 0);
                           const hasStock = stockAvailable > 0;
                           const row = [
@@ -5605,69 +5576,70 @@ function ErpApp({ currentUser, onLogout }) {
                               </tr>
                             );
                           })
-                        : pagedManagementRows.map((row, rowIndex) => (
-                            <tr key={`${activeManagementTab}-${rowIndex}`}>
-                              {row.map((cell, cellIndex) => (
-                                <td key={`${activeManagementTab}-${rowIndex}-${cellIndex}`}>{cell}</td>
-                              ))}
-                            </tr>
-                          ))}
-                      {(isItemsView
-                        ? filteredItemsRecords.length === 0
-                        : isSuppliersView
-                        ? filteredSuppliersRecords.length === 0
-                        : isPurchaseOrdersView
-                        ? filteredPurchaseOrdersRecords.length === 0
-                        : isUsersView
-                        ? filteredUsersRecords.length === 0
-                        : isCategoriesView
-                        ? filteredCategoriesRecords.length === 0
-                        : isInventoryWorkspace
-                        ? filteredInventoryRows.length === 0
-                        : filteredManagementRows.length === 0) && (
-                        <tr>
-                          <td colSpan={selectedWorkspaceData.columns.length} className="erp-table-empty">
-                            No matching records.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {totalRecords > 0 && (
-                  <div className="erp-table-pagination">
-                    <div className="erp-page-size-control">
-                      <span className="erp-page-size-label">Rows</span>
-                      <ErpCustomSelect
-                        value={String(rowsPerPage)}
-                        options={tablePageSizeOptions}
-                        onChange={(nextValue) => setRowsPerPage(Number(nextValue) || TABLE_PAGE_SIZE_OPTIONS[0])}
-                      />
-                    </div>
-                    <span className="erp-page-meta">
-                      {pageStartRecord}-{pageEndRecord} of {totalRecords}
-                    </span>
-                    <span className="erp-page-meta">
-                      Page {safePage} of {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      className="erp-mini-btn"
-                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                      disabled={safePage === 1}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      className="erp-mini-btn"
-                      onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                      disabled={safePage === totalPages}
-                    >
-                      Next
-                    </button>
+                          : pagedManagementRows.map((row, rowIndex) => (
+                              <tr key={`${activeManagementTab}-${rowIndex}`}>
+                                {row.map((cell, cellIndex) => (
+                                  <td key={`${activeManagementTab}-${rowIndex}-${cellIndex}`}>{cell}</td>
+                                ))}
+                              </tr>
+                            ))}
+                        {(isItemsView
+                          ? filteredItemsRecords.length === 0
+                          : isSuppliersView
+                          ? filteredSuppliersRecords.length === 0
+                          : isPurchaseOrdersView
+                          ? filteredPurchaseOrdersRecords.length === 0
+                          : isUsersView
+                          ? filteredUsersRecords.length === 0
+                          : isCategoriesView
+                          ? filteredCategoriesRecords.length === 0
+                          : isInventoryWorkspace
+                          ? filteredInventoryRows.length === 0
+                          : filteredManagementRows.length === 0) && (
+                          <tr>
+                            <td colSpan={selectedWorkspaceData.columns.length} className="erp-table-empty">
+                              No matching records.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
-                )}
+                  {totalRecords > 0 && (
+                    <div className="erp-table-pagination">
+                      <div className="erp-page-size-control">
+                        <span className="erp-page-size-label">Rows</span>
+                        <ErpCustomSelect
+                          value={String(rowsPerPage)}
+                          options={tablePageSizeOptions}
+                          onChange={(nextValue) => setRowsPerPage(Number(nextValue) || TABLE_PAGE_SIZE_OPTIONS[0])}
+                        />
+                      </div>
+                      <span className="erp-page-meta">
+                        {pageStartRecord}-{pageEndRecord} of {totalRecords}
+                      </span>
+                      <span className="erp-page-meta">
+                        Page {safePage} of {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        className="erp-mini-btn"
+                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                        disabled={safePage === 1}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        className="erp-mini-btn"
+                        onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                        disabled={safePage === totalPages}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </div>
                   </div>
                   {isSuppliersView && (
                     <aside className="erp-supplier-details-panel">

@@ -1,5 +1,6 @@
 import React from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
+import ErpCustomSelect from "./ErpCustomSelect";
 
 function formatDateTime(value) {
   if (!value) return "Immediate";
@@ -188,94 +189,90 @@ export default function PriceChangeWorkspace({
       <div className="erp-price-change-layout">
         <section className="erp-price-change-main">
           <div className="erp-table-layout">
-            <div className="erp-table-wrap" ref={tableWrapRef}>
-              <table className="erp-data-table is-price-change-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Description</th>
-                    <th>Vendor</th>
-                    <th>Effective</th>
-                    <th>Items</th>
-                    <th>Status</th>
-                    <th>User</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((priceChange, rowIndex) => {
-                    const isSelected =
-                      Number(selectedPriceChangeId) === Number(priceChange.id);
-                    return (
-                      <tr
-                        key={`price-change-${rowIndex}-${priceChange.id}`}
-                        className={isSelected ? "is-selected-row" : ""}
-                        onClick={() => onSelectPriceChange(Number(priceChange.id))}
-                      >
-                        <td>{String(priceChange.id || "")}</td>
-                        <td>{priceChange.description || ""}</td>
-                        <td>{priceChange.vendor || "--"}</td>
-                        <td>{formatDateTime(priceChange.effect_date)}</td>
-                        <td>
-                          {String(
-                            priceChange.total_items ?? priceChange.items?.length ?? 0
-                          )}
-                        </td>
-                        <td>{priceChange.status || "Open"}</td>
-                        <td>{priceChange.user || "--"}</td>
-                      </tr>
-                    );
-                  })}
-                  {totalRecords === 0 && (
+            <div className="erp-table-shell">
+              <div className="erp-table-wrap" ref={tableWrapRef}>
+                <table className="erp-data-table is-price-change-table">
+                  <thead>
                     <tr>
-                      <td colSpan="7" className="erp-table-empty">
-                        No price changes found.
-                      </td>
+                      <th>ID</th>
+                      <th>Description</th>
+                      <th>Vendor</th>
+                      <th>Effective</th>
+                      <th>Items</th>
+                      <th>Status</th>
+                      <th>User</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {totalRecords > 0 && (
-              <div className="erp-table-pagination">
-                <div className="erp-page-size-control">
-                  <span className="erp-page-size-label">Rows</span>
-                  <select
-                    className="erp-price-change-select"
-                    value={String(rowsPerPage)}
-                    onChange={(event) => onRowsPerPageChange(event.target.value)}
-                  >
-                    {pageOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <span className="erp-page-meta">
-                  {pageStartRecord}-{pageEndRecord} of {totalRecords}
-                </span>
-                <span className="erp-page-meta">
-                  Page {safePage} of {totalPages}
-                </span>
-                <button
-                  type="button"
-                  className="erp-mini-btn"
-                  onClick={onPrevPage}
-                  disabled={safePage === 1}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  className="erp-mini-btn"
-                  onClick={onNextPage}
-                  disabled={safePage === totalPages}
-                >
-                  Next
-                </button>
+                  </thead>
+                  <tbody>
+                    {records.map((priceChange, rowIndex) => {
+                      const isSelected =
+                        Number(selectedPriceChangeId) === Number(priceChange.id);
+                      return (
+                        <tr
+                          key={`price-change-${rowIndex}-${priceChange.id}`}
+                          className={isSelected ? "is-selected-row" : ""}
+                          onClick={() => onSelectPriceChange(Number(priceChange.id))}
+                        >
+                          <td>{String(priceChange.id || "")}</td>
+                          <td>{priceChange.description || ""}</td>
+                          <td>{priceChange.vendor || "--"}</td>
+                          <td>{formatDateTime(priceChange.effect_date)}</td>
+                          <td>
+                            {String(
+                              priceChange.total_items ?? priceChange.items?.length ?? 0
+                            )}
+                          </td>
+                          <td>{priceChange.status || "Open"}</td>
+                          <td>{priceChange.user || "--"}</td>
+                        </tr>
+                      );
+                    })}
+                    {totalRecords === 0 && (
+                      <tr>
+                        <td colSpan="7" className="erp-table-empty">
+                          No price changes found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
-            )}
+
+              {totalRecords > 0 && (
+                <div className="erp-table-pagination">
+                  <div className="erp-page-size-control">
+                    <span className="erp-page-size-label">Rows</span>
+                    <ErpCustomSelect
+                      value={String(rowsPerPage)}
+                      options={pageOptions}
+                      onChange={onRowsPerPageChange}
+                    />
+                  </div>
+                  <span className="erp-page-meta">
+                    {pageStartRecord}-{pageEndRecord} of {totalRecords}
+                  </span>
+                  <span className="erp-page-meta">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="erp-mini-btn"
+                    onClick={onPrevPage}
+                    disabled={safePage === 1}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    className="erp-mini-btn"
+                    onClick={onNextPage}
+                    disabled={safePage === totalPages}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </div>

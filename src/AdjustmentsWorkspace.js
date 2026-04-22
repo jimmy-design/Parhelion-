@@ -2,12 +2,10 @@ import React from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
-  CheckCircle2,
-  ClipboardCheck,
-  PackageSearch,
-  ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
+import ErpCustomSelect from "./ErpCustomSelect";
 
 const DEFAULT_REASON_OPTIONS = [
   "Damaged",
@@ -25,6 +23,89 @@ const DEFAULT_LOCATION_OPTIONS = [
   "Returns Cage",
   "Nairobi Dispatch",
 ];
+
+function normalizeAdjustmentItemSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildAdjustmentItemSearchResult(items, query) {
+  const normalizedQuery = normalizeAdjustmentItemSearch(query);
+  if (!normalizedQuery) {
+    return {
+      match: null,
+      status: "idle",
+      message: "Search by item lookup code, barcode, or description.",
+    };
+  }
+
+  const catalog = Array.isArray(items) ? items : [];
+  const exactMatch =
+    catalog.find((item) => {
+      const lookupCode = normalizeAdjustmentItemSearch(item?.lookup_code);
+      const barcode = normalizeAdjustmentItemSearch(item?.alias);
+      const description = normalizeAdjustmentItemSearch(item?.description);
+      return (
+        normalizedQuery === lookupCode ||
+        normalizedQuery === barcode ||
+        normalizedQuery === description
+      );
+    }) || null;
+
+  if (exactMatch) {
+    return {
+      match: exactMatch,
+      status: "matched",
+      message: `Matched ${String(exactMatch?.description || exactMatch?.lookup_code || "item").trim()}.`,
+    };
+  }
+
+  const partialMatches = catalog.filter((item) => {
+    const lookupCode = normalizeAdjustmentItemSearch(item?.lookup_code);
+    const barcode = normalizeAdjustmentItemSearch(item?.alias);
+    const description = normalizeAdjustmentItemSearch(item?.description);
+    return (
+      lookupCode.includes(normalizedQuery) ||
+      barcode.includes(normalizedQuery) ||
+      description.includes(normalizedQuery)
+    );
+  });
+
+  if (partialMatches.length === 1) {
+    return {
+      match: partialMatches[0],
+      status: "matched",
+      message: `Matched ${String(partialMatches[0]?.description || partialMatches[0]?.lookup_code || "item").trim()}.`,
+    };
+  }
+
+  if (partialMatches.length > 1) {
+    return {
+      match: null,
+      status: "multiple",
+      message: `${partialMatches.length} items match. Keep typing to narrow the search.`,
+    };
+  }
+
+  return {
+    match: null,
+    status: "missing",
+    message: "No item found. Check the lookup code, barcode, or description.",
+  };
+}
+
+function formatAdjustmentItemMatch(item) {
+  const description = String(item?.description || item?.lookup_code || "Item").trim();
+  const lookupCode = String(item?.lookup_code || "").trim();
+  const barcode = String(item?.alias || "").trim();
+
+  return [
+    description,
+    lookupCode ? `Code ${lookupCode}` : "",
+    barcode ? `Barcode ${barcode}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
 
 function createDraft(requestedBy = "") {
   const now = new Date();
@@ -63,10 +144,6 @@ function formatSignedQuantity(value) {
   return `${normalized > 0 ? "+" : ""}${normalized.toLocaleString()}`;
 }
 
-function formatAbsoluteQuantity(value) {
-  return Math.abs(Number(value || 0)).toLocaleString();
-}
-
 function getStatusTone(status) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "posted") return "is-posted";
@@ -95,7 +172,7 @@ export default function AdjustmentsWorkspace({
   onSelectAdjustment,
   onSaveAdjustment,
   currentUserLabel,
-  itemSuggestions,
+  inventoryItems,
   saving = false,
   rowsPerPage,
   pageOptions,
@@ -110,8 +187,11 @@ export default function AdjustmentsWorkspace({
   onNotify,
 }) {
   const [draft, setDraft] = React.useState(() => createDraft(currentUserLabel));
+  const [itemSearch, setItemSearch] = React.useState("");
+  const [showStatCards, setShowStatCards] = React.useState(false);
+  const [showSelectedDetail, setShowSelectedDetail] = React.useState(false);
+  const [isQuickCaptureOpen, setIsQuickCaptureOpen] = React.useState(false);
   const itemInputRef = React.useRef(null);
-  const formPanelRef = React.useRef(null);
   const notifyRef = React.useRef(onNotify);
   const recordsRef = React.useRef(summaryRecords);
 
@@ -131,12 +211,7 @@ export default function AdjustmentsWorkspace({
     if (!actionRequest?.nonce) return;
 
     if (actionRequest.type === "create") {
-      formPanelRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest",
-      });
-      window.setTimeout(() => itemInputRef.current?.focus(), 120);
+      setIsQuickCaptureOpen(true);
       return;
     }
 
@@ -179,12 +254,27 @@ export default function AdjustmentsWorkspace({
     }
   }, [actionRequest?.nonce, actionRequest?.type]);
 
+  React.useEffect(() => {
+    if (!isQuickCaptureOpen) return undefined;
+
+    const timer = window.setTimeout(() => itemInputRef.current?.focus(), 120);
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setIsQuickCaptureOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isQuickCaptureOpen]);
+
   const selectedRecord =
     (Array.isArray(summaryRecords) ? summaryRecords : []).find(
       (record) => String(record.id) === String(selectedAdjustmentId)
-    ) ||
-    (Array.isArray(summaryRecords) ? summaryRecords[0] : null) ||
-    null;
+    ) || null;
 
   const summary = React.useMemo(() => {
     const sourceRecords = Array.isArray(summaryRecords) ? summaryRecords : [];
@@ -226,39 +316,26 @@ export default function AdjustmentsWorkspace({
     };
   }, [summaryRecords]);
 
-  const mergedSuggestions = React.useMemo(() => {
-    const suggestionMap = new Map();
-
-    (Array.isArray(itemSuggestions) ? itemSuggestions : []).forEach((item) => {
-      const name = String(item?.item || "").trim();
-      const sku = String(item?.sku || "").trim();
-      const key = `${sku}|${name}`;
-      if (!name || suggestionMap.has(key)) return;
-      suggestionMap.set(key, { item: name, sku });
-    });
-
-    (Array.isArray(summaryRecords) ? summaryRecords : []).forEach((record) => {
-      const name = String(record?.item || "").trim();
-      const sku = String(record?.sku || "").trim();
-      const key = `${sku}|${name}`;
-      if (!name || suggestionMap.has(key)) return;
-      suggestionMap.set(key, { item: name, sku });
-    });
-
-    return Array.from(suggestionMap.values()).slice(0, 8);
-  }, [itemSuggestions, summaryRecords]);
+  const itemSearchResult = React.useMemo(
+    () => buildAdjustmentItemSearchResult(inventoryItems, itemSearch),
+    [inventoryItems, itemSearch]
+  );
 
   const handleDraftChange = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleSuggestionPick = (suggestion) => {
+  const handleItemSearchChange = (value) => {
+    setItemSearch(value);
+
+    const result = buildAdjustmentItemSearchResult(inventoryItems, value);
+    if (!result.match) return;
+
     setDraft((prev) => ({
       ...prev,
-      item: suggestion.item,
-      sku: suggestion.sku,
+      item: String(result.match?.description || "").trim(),
+      sku: String(result.match?.lookup_code || "").trim(),
     }));
-    itemInputRef.current?.focus();
   };
 
   const handleSubmit = async (event) => {
@@ -266,6 +343,28 @@ export default function AdjustmentsWorkspace({
     const createdRecord = await onSaveAdjustment(draft);
     if (!createdRecord) return;
     setDraft(createDraft(currentUserLabel));
+    setItemSearch("");
+    setIsQuickCaptureOpen(false);
+  };
+
+  const handleAdjustmentSelect = (adjustmentId) => {
+    setShowStatCards(true);
+    setShowSelectedDetail(true);
+    onSelectAdjustment(adjustmentId);
+  };
+
+  const handleOpenQuickCapture = () => {
+    setIsQuickCaptureOpen(true);
+  };
+
+  const handleCloseQuickCapture = () => {
+    setIsQuickCaptureOpen(false);
+  };
+
+  const handleClearDraft = () => {
+    setDraft(createDraft(currentUserLabel));
+    setItemSearch("");
+    itemInputRef.current?.focus();
   };
 
   const statCards = [
@@ -302,354 +401,153 @@ export default function AdjustmentsWorkspace({
 
   return (
     <div className="erp-adjustments-layout">
-      <section className="erp-adjustments-hero">
-        <div className="erp-adjustments-hero-copy">
-          <span className="erp-adjustments-hero-eyebrow">Inventory Control</span>
-          <h3>Stock Adjustments</h3>
-          <p>
-            Keep stock corrections visible in one place with clear approval context, movement
-            summaries, and a fast capture lane for new entries.
-          </p>
-
-          <div className="erp-adjustments-signal-row">
-            <span className="erp-adjustments-signal-chip">
-              <ClipboardCheck size={15} />
-              {summary.pendingCount} pending review
-            </span>
-            <span className="erp-adjustments-signal-chip">
-              <ShieldCheck size={15} />
-              {summary.approvedCount + summary.postedCount} already cleared
-            </span>
-            <span className="erp-adjustments-signal-chip">
-              <PackageSearch size={15} />
-              {formatAbsoluteQuantity(summary.reductionUnits)} units reduced
-            </span>
-          </div>
-        </div>
-
-        <div className="erp-adjustments-hero-focus">
-          <div className="erp-adjustments-focus-card">
-            <span className="erp-adjustments-focus-label">Live Focus</span>
-            <strong>{selectedRecord?.item || "No adjustment selected"}</strong>
-            <p>
-              {selectedRecord
-                ? `Raised by ${selectedRecord.raisedBy} on ${formatDateTime(selectedRecord.requestedAt)}`
-                : "Select an entry below to inspect its movement trail and approval details."}
-            </p>
-            {selectedRecord && (
-              <>
-                <div className="erp-adjustments-focus-tags">
-                  <span className="erp-adjustments-focus-tag">{selectedRecord.reason}</span>
-                  <span className="erp-adjustments-focus-tag">{selectedRecord.location}</span>
-                </div>
-                <div className="erp-adjustments-focus-main">
-                  <span
-                    className={`erp-adjustment-row-qty ${
-                      Number(selectedRecord.quantity || 0) >= 0 ? "is-positive" : "is-negative"
-                    }`}
-                  >
-                    {Number(selectedRecord.quantity || 0) >= 0 ? (
-                      <ArrowUpRight size={14} />
-                    ) : (
-                      <ArrowDownRight size={14} />
-                    )}
-                    {formatSignedQuantity(selectedRecord.quantity)}
-                  </span>
-                  <span className={`erp-adjustment-pill is-status ${getStatusTone(selectedRecord.status)}`}>
-                    {selectedRecord.status}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="erp-adjustments-stats">
-        {statCards.map((card) => (
-          <article key={card.id} className={`erp-adjustments-stat-card ${card.tone}`.trim()}>
-            <span className="erp-adjustments-stat-label">{card.label}</span>
-            <strong className="erp-adjustments-stat-value">{card.value}</strong>
-            <small className="erp-adjustments-stat-trend">{card.hint}</small>
-          </article>
-        ))}
-      </section>
+      {showStatCards && (
+        <section className="erp-adjustments-stats">
+          {statCards.map((card) => (
+            <article key={card.id} className={`erp-adjustments-stat-card ${card.tone}`.trim()}>
+              <span className="erp-adjustments-stat-label">{card.label}</span>
+              <strong className="erp-adjustments-stat-value">{card.value}</strong>
+              <small className="erp-adjustments-stat-trend">{card.hint}</small>
+            </article>
+          ))}
+        </section>
+      )}
 
       <div className="erp-adjustments-content">
-        <section className="erp-adjustments-panel">
-          <div className="erp-adjustments-panel-head">
-            <div className="erp-adjustments-panel-title">
-              <h4>Movement Ledger</h4>
-              <p>{totalRecords} entries in the current view</p>
-            </div>
-
-            <div className="erp-adjustments-breakdown">
-              {summary.topReasons.length ? (
-                summary.topReasons.map(([reason, count]) => (
-                  <span
-                    key={`${reason}-${count}`}
-                    className={`erp-adjustment-pill ${getReasonTone(reason)}`}
-                  >
-                    {reason} {count}
-                  </span>
-                ))
-              ) : (
-                <span className="erp-adjustment-pill is-neutral-reason">No activity yet</span>
-              )}
-            </div>
-          </div>
-
+        <section className="erp-adjustments-ledger-panel">
           <div className="erp-adjustments-ledger">
             {records.length ? (
-              records.map((record) => {
-                const isSelected = String(record.id) === String(selectedAdjustmentId);
-                const quantity = Number(record.quantity || 0);
-                return (
-                  <button
-                    key={record.id}
-                    type="button"
-                  className={`erp-adjustment-row-card ${isSelected ? "is-selected" : ""}`.trim()}
-                  onClick={() => onSelectAdjustment(record.id)}
-                  disabled={saving}
-                >
-                    <div className="erp-adjustment-row-head">
-                      <div className="erp-adjustment-row-item">
-                        <strong>{record.item}</strong>
-                        <span>
-                          {record.id} {record.sku ? `- ${record.sku}` : ""}
-                        </span>
-                      </div>
-                      <span
-                        className={`erp-adjustment-row-qty ${
-                          quantity >= 0 ? "is-positive" : "is-negative"
-                        }`}
-                      >
-                        {quantity >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                        {formatSignedQuantity(quantity)}
-                      </span>
-                    </div>
+              <div className="erp-table-shell erp-adjustments-ledger-shell">
+                <div className="erp-table-wrap erp-adjustments-ledger-wrap">
+                  <table className="erp-data-table erp-adjustments-ledger-table">
+                    <thead>
+                      <tr>
+                        <th>Ref</th>
+                        <th>Lookup</th>
+                        <th>Item Description</th>
+                        <th>Qty</th>
+                        <th>Location</th>
+                        <th>Raised By</th>
+                        <th>Requested</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {records.map((record) => {
+                        const isSelected = String(record.id) === String(selectedAdjustmentId);
+                        const quantity = Number(record.quantity || 0);
 
-                    <div className="erp-adjustment-row-main">
-                      <div className="erp-adjustment-row-badges">
-                        <span className={`erp-adjustment-pill ${getReasonTone(record.reason)}`}>
-                          {record.reason}
-                        </span>
-                        <span
-                          className={`erp-adjustment-pill is-status ${getStatusTone(record.status)}`}
-                        >
-                          {record.status}
-                        </span>
-                      </div>
+                        return (
+                          <tr
+                            key={record.id}
+                            role="button"
+                            tabIndex={saving ? -1 : 0}
+                            aria-selected={isSelected}
+                            aria-disabled={saving}
+                            className={isSelected ? "is-selected-row" : ""}
+                            onClick={() => {
+                              if (!saving) {
+                                handleAdjustmentSelect(record.id);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (saving) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                handleAdjustmentSelect(record.id);
+                              }
+                            }}
+                          >
+                            <td className="erp-adjustments-ledger-ref">{record.id}</td>
+                            <td>{record.sku || "N/A"}</td>
+                            <td className="erp-adjustments-ledger-item">
+                              <strong>{record.item}</strong>
+                            </td>
+                            <td>
+                              <span
+                                className={`erp-adjustment-row-qty ${
+                                  quantity >= 0 ? "is-positive" : "is-negative"
+                                }`}
+                              >
+                                {quantity >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                                {formatSignedQuantity(quantity)}
+                              </span>
+                            </td>
+                            <td>{record.location}</td>
+                            <td>{record.raisedBy}</td>
+                            <td>{formatDateTime(record.requestedAt)}</td>
+                            <td>
+                              <span className={`erp-adjustment-pill is-status ${getStatusTone(record.status)}`}>
+                                {record.status}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`erp-adjustment-pill ${getReasonTone(record.reason)}`}>
+                                {record.reason}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                      <div className="erp-adjustment-row-trail">
-                        <span>{record.location}</span>
-                        <span>{record.raisedBy}</span>
-                        <span>{formatDateTime(record.requestedAt)}</span>
-                      </div>
+                {totalRecords > 0 && (
+                  <div className="erp-table-pagination">
+                    <div className="erp-page-size-control">
+                      <span className="erp-page-size-label">Rows</span>
+                      <ErpCustomSelect
+                        value={String(rowsPerPage)}
+                        options={pageOptions}
+                        onChange={onRowsPerPageChange}
+                      />
                     </div>
-                  </button>
-                );
-              })
+                    <span className="erp-page-meta">
+                      {pageStartRecord}-{pageEndRecord} of {totalRecords}
+                    </span>
+                    <span className="erp-page-meta">
+                      Page {safePage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="erp-mini-btn"
+                      onClick={onPrevPage}
+                      disabled={safePage === 1}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="erp-mini-btn"
+                      onClick={onNextPage}
+                      disabled={safePage === totalPages}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="erp-adjustment-empty">
                 <Sparkles size={20} />
                 <strong>No matching adjustment entries</strong>
-                <p>Try another search term or create a new draft from the panel on the right.</p>
+                <p>Try another search term or open Quick Capture to raise a new adjustment.</p>
+                <button
+                  type="button"
+                  className="erp-mini-btn erp-mini-btn-primary"
+                  disabled={saving}
+                  onClick={handleOpenQuickCapture}
+                >
+                  Open Quick Capture
+                </button>
               </div>
             )}
           </div>
-
-          {totalRecords > 0 && (
-            <div className="erp-table-pagination erp-adjustments-pagination">
-              <div className="erp-page-size-control">
-                <span className="erp-page-size-label">Rows</span>
-                <select
-                  className="erp-adjustments-table-select"
-                  value={String(rowsPerPage)}
-                  onChange={(event) => onRowsPerPageChange(event.target.value)}
-                >
-                  {pageOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <span className="erp-page-meta">
-                {pageStartRecord}-{pageEndRecord} of {totalRecords}
-              </span>
-              <span className="erp-page-meta">
-                Page {safePage} of {totalPages}
-              </span>
-              <button type="button" className="erp-mini-btn" onClick={onPrevPage} disabled={safePage === 1}>
-                Previous
-              </button>
-              <button
-                type="button"
-                className="erp-mini-btn"
-                onClick={onNextPage}
-                disabled={safePage === totalPages}
-              >
-                Next
-              </button>
-            </div>
-          )}
         </section>
-
-        <div className="erp-adjustments-side-stack">
-          <section ref={formPanelRef} className="erp-adjustments-panel">
-            <div className="erp-adjustments-panel-head">
-              <div className="erp-adjustments-panel-title">
-                <h4>Quick Capture</h4>
-                <p>Draft a new adjustment without leaving this view</p>
-              </div>
-            </div>
-
-            <form className="erp-adjustments-quick-form" onSubmit={handleSubmit}>
-              <div className="erp-adjustments-direction-toggle">
-                <button
-                  type="button"
-                  className={`erp-adjustments-direction-button ${
-                    draft.direction === "out" ? "is-active is-negative" : ""
-                  }`.trim()}
-                  disabled={saving}
-                  onClick={() => handleDraftChange("direction", "out")}
-                >
-                  <ArrowDownRight size={15} />
-                  Reduce stock
-                </button>
-                <button
-                  type="button"
-                  className={`erp-adjustments-direction-button ${
-                    draft.direction === "in" ? "is-active is-positive" : ""
-                  }`.trim()}
-                  disabled={saving}
-                  onClick={() => handleDraftChange("direction", "in")}
-                >
-                  <ArrowUpRight size={15} />
-                  Add stock
-                </button>
-              </div>
-
-              <div className="erp-adjustments-form-grid">
-                <div className="erp-form-field is-span-2">
-                  <label>Item Description</label>
-                  <input
-                    ref={itemInputRef}
-                    type="text"
-                    value={draft.item}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("item", event.target.value)}
-                    placeholder="e.g. Orthopedic Mattress 5x6"
-                  />
-                </div>
-                <div className="erp-form-field">
-                  <label>SKU / Lookup Code</label>
-                  <input
-                    type="text"
-                    value={draft.sku}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("sku", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-                <div className="erp-form-field">
-                  <label>Quantity</label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={draft.quantity}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("quantity", event.target.value)}
-                  />
-                </div>
-                <div className="erp-form-field">
-                  <label>Reason</label>
-                  <select
-                    value={draft.reason}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("reason", event.target.value)}
-                  >
-                    {DEFAULT_REASON_OPTIONS.map((reason) => (
-                      <option key={reason} value={reason}>
-                        {reason}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="erp-form-field">
-                  <label>Location</label>
-                  <select
-                    value={draft.location}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("location", event.target.value)}
-                  >
-                    {DEFAULT_LOCATION_OPTIONS.map((location) => (
-                      <option key={location} value={location}>
-                        {location}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="erp-form-field">
-                  <label>Effective Date</label>
-                  <input
-                    type="date"
-                    value={draft.effectiveDate}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("effectiveDate", event.target.value)}
-                  />
-                </div>
-                <div className="erp-form-field">
-                  <label>Raised By</label>
-                  <input type="text" value={draft.requestedBy} readOnly disabled={saving} />
-                </div>
-                <div className="erp-form-field is-span-2">
-                  <label>Audit Note</label>
-                  <textarea
-                    rows="4"
-                    value={draft.note}
-                    disabled={saving}
-                    onChange={(event) => handleDraftChange("note", event.target.value)}
-                    placeholder="Describe why the adjustment is needed and what changed physically."
-                  />
-                </div>
-              </div>
-
-              {mergedSuggestions.length > 0 && (
-                <div className="erp-adjustments-suggestion-row">
-                  {mergedSuggestions.map((suggestion) => (
-                    <button
-                      key={`${suggestion.sku}-${suggestion.item}`}
-                      type="button"
-                      className="erp-adjustments-suggestion-chip"
-                      disabled={saving}
-                      onClick={() => handleSuggestionPick(suggestion)}
-                    >
-                      {suggestion.item}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div className="erp-adjustments-form-actions">
-                <button
-                  type="button"
-                  className="erp-mini-btn"
-                  disabled={saving}
-                  onClick={() => setDraft(createDraft(currentUserLabel))}
-                >
-                  Clear Draft
-                </button>
-                <button type="submit" className="erp-mini-btn erp-mini-btn-primary" disabled={saving}>
-                  {saving ? "Saving..." : "Save Adjustment"}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="erp-adjustments-panel">
+        {showSelectedDetail && selectedRecord && (
+          <section className="erp-adjustments-panel erp-adjustments-detail-panel">
             <div className="erp-adjustments-panel-head">
               <div className="erp-adjustments-panel-title">
                 <h4>Selected Detail</h4>
@@ -657,32 +555,32 @@ export default function AdjustmentsWorkspace({
               </div>
             </div>
 
-            {selectedRecord ? (
-              <div className="erp-adjustments-detail-stack">
-                <div className="erp-adjustments-detail-grid">
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Movement</span>
-                    <strong className="erp-adjustments-detail-value">
-                      {formatSignedQuantity(selectedRecord.quantity)} units
-                    </strong>
-                    <small>{selectedRecord.location}</small>
-                  </article>
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Raised By</span>
-                    <strong className="erp-adjustments-detail-value">{selectedRecord.raisedBy}</strong>
-                    <small>{formatDateTime(selectedRecord.requestedAt)}</small>
-                  </article>
-                  <article className="erp-adjustments-detail-card">
-                    <span className="erp-adjustments-detail-label">Status</span>
-                    <strong className="erp-adjustments-detail-value">{selectedRecord.status}</strong>
-                    <small>
-                      {selectedRecord.approvedBy
-                        ? `Reviewed by ${selectedRecord.approvedBy}`
-                        : "Waiting for reviewer"}
-                    </small>
-                  </article>
-                </div>
+            <div className="erp-adjustments-detail-stack">
+              <div className="erp-adjustments-detail-grid">
+                <article className="erp-adjustments-detail-card">
+                  <span className="erp-adjustments-detail-label">Movement</span>
+                  <strong className="erp-adjustments-detail-value">
+                    {formatSignedQuantity(selectedRecord.quantity)} units
+                  </strong>
+                  <small>{selectedRecord.location}</small>
+                </article>
+                <article className="erp-adjustments-detail-card">
+                  <span className="erp-adjustments-detail-label">Raised By</span>
+                  <strong className="erp-adjustments-detail-value">{selectedRecord.raisedBy}</strong>
+                  <small>{formatDateTime(selectedRecord.requestedAt)}</small>
+                </article>
+                <article className="erp-adjustments-detail-card">
+                  <span className="erp-adjustments-detail-label">Status</span>
+                  <strong className="erp-adjustments-detail-value">{selectedRecord.status}</strong>
+                  <small>
+                    {selectedRecord.approvedBy
+                      ? `Reviewed by ${selectedRecord.approvedBy}`
+                      : "Waiting for reviewer"}
+                  </small>
+                </article>
+              </div>
 
+              <div className="erp-adjustments-detail-lower">
                 <div className="erp-adjustments-detail-note">
                   <span className="erp-adjustments-detail-label">Audit Note</span>
                   <p>{selectedRecord.note || "No note attached to this adjustment."}</p>
@@ -703,16 +601,186 @@ export default function AdjustmentsWorkspace({
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="erp-adjustment-empty">
-                <CheckCircle2 size={20} />
-                <strong>No entry selected</strong>
-                <p>Choose an adjustment card to see the approval trail and supporting note.</p>
-              </div>
-            )}
+            </div>
           </section>
-        </div>
+        )}
       </div>
+
+      {isQuickCaptureOpen && (
+        <div className="erp-modal-overlay erp-adjustments-modal-overlay" onClick={handleCloseQuickCapture}>
+          <div
+            className="erp-modal-card erp-adjustments-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Quick Capture"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="erp-modal-header">
+              <h3>Quick Capture</h3>
+              <div className="erp-window-controls">
+                <button
+                  type="button"
+                  className="erp-window-btn erp-window-btn-close"
+                  onClick={handleCloseQuickCapture}
+                  aria-label="Close quick capture"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+
+            <div className="erp-adjustments-modal-body">
+              <div className="erp-adjustments-panel-search erp-adjustments-modal-search">
+                <input
+                  ref={itemInputRef}
+                  type="text"
+                  value={itemSearch}
+                  disabled={saving}
+                  autoComplete="off"
+                  onChange={(event) => handleItemSearchChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                    }
+                  }}
+                  placeholder="Find item by lookup code, barcode, or description"
+                />
+                <small className={`erp-adjustments-item-search-help is-${itemSearchResult.status}`.trim()}>
+                  {itemSearchResult.match
+                    ? formatAdjustmentItemMatch(itemSearchResult.match)
+                    : itemSearchResult.message}
+                </small>
+              </div>
+
+              <form className="erp-adjustments-quick-form" onSubmit={handleSubmit}>
+                <div className="erp-adjustments-direction-toggle">
+                  <button
+                    type="button"
+                    className={`erp-adjustments-direction-button ${
+                      draft.direction === "out" ? "is-active is-negative" : ""
+                    }`.trim()}
+                    disabled={saving}
+                    onClick={() => handleDraftChange("direction", "out")}
+                  >
+                    <ArrowDownRight size={15} />
+                    Reduce stock
+                  </button>
+                  <button
+                    type="button"
+                    className={`erp-adjustments-direction-button ${
+                      draft.direction === "in" ? "is-active is-positive" : ""
+                    }`.trim()}
+                    disabled={saving}
+                    onClick={() => handleDraftChange("direction", "in")}
+                  >
+                    <ArrowUpRight size={15} />
+                    Add stock
+                  </button>
+                </div>
+
+                <div className="erp-adjustments-form-grid">
+                  <div className="erp-form-field is-span-2">
+                    <label>Item Description</label>
+                    <input
+                      type="text"
+                      value={draft.item}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("item", event.target.value)}
+                      placeholder="e.g. Orthopedic Mattress 5x6"
+                    />
+                  </div>
+                  <div className="erp-form-field">
+                    <label>SKU / Lookup Code</label>
+                    <input
+                      type="text"
+                      value={draft.sku}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("sku", event.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="erp-form-field">
+                    <label>Quantity</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={draft.quantity}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("quantity", event.target.value)}
+                    />
+                  </div>
+                  <div className="erp-form-field">
+                    <label>Reason</label>
+                    <select
+                      value={draft.reason}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("reason", event.target.value)}
+                    >
+                      {DEFAULT_REASON_OPTIONS.map((reason) => (
+                        <option key={reason} value={reason}>
+                          {reason}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="erp-form-field">
+                    <label>Location</label>
+                    <select
+                      value={draft.location}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("location", event.target.value)}
+                    >
+                      {DEFAULT_LOCATION_OPTIONS.map((location) => (
+                        <option key={location} value={location}>
+                          {location}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="erp-form-field">
+                    <label>Effective Date</label>
+                    <input
+                      type="date"
+                      value={draft.effectiveDate}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("effectiveDate", event.target.value)}
+                    />
+                  </div>
+                  <div className="erp-form-field">
+                    <label>Raised By</label>
+                    <input type="text" value={draft.requestedBy} readOnly disabled={saving} />
+                  </div>
+                  <div className="erp-form-field is-span-2">
+                    <label>Audit Note</label>
+                    <textarea
+                      rows="4"
+                      value={draft.note}
+                      disabled={saving}
+                      onChange={(event) => handleDraftChange("note", event.target.value)}
+                      placeholder="Describe why the adjustment is needed and what changed physically."
+                    />
+                  </div>
+                </div>
+
+                <div className="erp-adjustments-form-actions">
+                  <button
+                    type="button"
+                    className="erp-mini-btn"
+                    disabled={saving}
+                    onClick={handleClearDraft}
+                  >
+                    Clear Draft
+                  </button>
+                  <button type="submit" className="erp-mini-btn erp-mini-btn-primary" disabled={saving}>
+                    {saving ? "Saving..." : "Save Adjustment"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
