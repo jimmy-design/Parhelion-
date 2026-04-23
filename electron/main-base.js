@@ -838,6 +838,16 @@ function registerIpcHandlers() {
   ipcMain.handle("auth:fingerprint-login", async (_event, options = {}) => {
     return authenticateWithFingerprint(options);
   });
+
+  ipcMain.handle("app:close-current-window", async (event) => {
+    const currentWindow = BrowserWindow.fromWebContents(event.sender);
+    if (currentWindow && !currentWindow.isDestroyed()) {
+      currentWindow.close();
+      return { ok: true };
+    }
+
+    return { ok: false };
+  });
 }
 
 function bootstrap(appVariant) {

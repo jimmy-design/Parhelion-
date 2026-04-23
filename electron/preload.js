@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld("api", {
     invalidateFingerprintCache: () => ipcRenderer.invoke("auth:invalidate-fingerprint-cache"),
     loginWithFingerprint: (options) => ipcRenderer.invoke("auth:fingerprint-login", options),
   },
+  app: {
+    closeCurrentWindow: () => ipcRenderer.invoke("app:close-current-window"),
+  },
   updates: {
     getState: () => ipcRenderer.invoke("app-update:get-state"),
     check: () => ipcRenderer.invoke("app-update:check"),

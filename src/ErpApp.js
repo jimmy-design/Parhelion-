@@ -1090,6 +1090,26 @@ function getUpdaterBridge() {
   return window.api?.updates || null;
 }
 
+function isEditableElement(target) {
+  if (!target || typeof target.closest !== "function") {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"]'
+    )
+  );
+}
+
+function hasOpenErpSelect() {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  return Boolean(document.querySelector(".erp-custom-select.is-open"));
+}
+
 function createInitialUpdateState() {
   const updaterBridge = getUpdaterBridge();
 
@@ -1807,6 +1827,8 @@ function ErpApp({ currentUser, onLogout }) {
   const purchaseOrderModalTitle = isViewingPurchaseOrder
     ? "Purchase Order Properties"
     : "Create Purchase Order";
+  const isPriceChangeComposerOpen =
+    priceChangeComposerMode === "create" || priceChangeComposerMode === "edit";
   const isAnyModalOpen =
     showAddItemForm ||
     showAddSupplierForm ||
@@ -1815,6 +1837,8 @@ function ErpApp({ currentUser, onLogout }) {
     showAddCategoryForm ||
     showAddUserForm ||
     showFingerprintModal;
+  const shouldBlockEscapeLogout =
+    isAnyModalOpen || isPriceChangeComposerOpen || showPriceChangeHistoryModal;
 
   const itemsTableData = useMemo(
     () => ({
@@ -4930,6 +4954,47 @@ function ErpApp({ currentUser, onLogout }) {
       }
     };
   }, [updaterBridge]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleEscapeLogout = (event) => {
+      if (event.key !== "Escape" || event.repeat) {
+        return;
+      }
+
+      if (shouldBlockEscapeLogout || hasOpenErpSelect()) {
+        return;
+      }
+
+      if (
+        isEditableElement(event.target) ||
+        isEditableElement(document.activeElement)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      onLogout?.();
+
+      const closeCurrentWindow = window.api?.app?.closeCurrentWindow;
+      if (typeof closeCurrentWindow === "function") {
+        Promise.resolve(closeCurrentWindow()).catch(() => null);
+        return;
+      }
+
+      if (typeof window.close === "function") {
+        window.close();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscapeLogout);
+    return () => {
+      window.removeEventListener("keydown", handleEscapeLogout);
+    };
+  }, [onLogout, shouldBlockEscapeLogout]);
 
   return (
     <div className={`erp-shell ${isAnyModalOpen ? "is-modal-open" : ""}`.trim()}>
