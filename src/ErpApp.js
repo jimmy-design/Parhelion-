@@ -34,6 +34,8 @@ import {
   ArrowDownRight,
   Info,
   LogOut,
+  LayoutGrid,
+  PanelLeftClose,
 } from "lucide-react";
 import { API_BASE_URL, apiFetch } from "./appConfig";
 
@@ -1481,6 +1483,7 @@ function ErpApp({ currentUser, onLogout }) {
   );
 
   const [activeNav, setActiveNav] = useState("dashboard");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState("items");
   const [activeInventoryTab, setActiveInventoryTab] = useState("stock-overview");
   const [searchTerm, setSearchTerm] = useState("");
@@ -2484,6 +2487,58 @@ function ErpApp({ currentUser, onLogout }) {
       return saved;
     } catch (error) {
       pushAlert("error", error.message || "Failed to save adjustment.");
+      return null;
+    } finally {
+      setSavingAdjustment(false);
+    }
+  };
+
+  const handleApproveAdjustment = async (record) => {
+    const adjustmentId = String(record?.id || "").trim();
+    if (!adjustmentId) {
+      pushAlert("warning", "Select an adjustment to approve.");
+      return null;
+    }
+
+    const status = String(record?.status || "").trim().toLowerCase();
+    if (status && status !== "pending") {
+      pushAlert("warning", `Adjustment ${adjustmentId} is already ${record.status}.`);
+      return null;
+    }
+
+    setSavingAdjustment(true);
+    try {
+      const updated = await fetchJsonWithFallback(
+        `/erp/adjustments/${encodeURIComponent(adjustmentId)}/approve`,
+        {
+          method: "POST",
+          headers: { "x-erp-user": currentUserLabel },
+        },
+        "Failed to approve adjustment"
+      );
+
+      setSelectedAdjustmentId(updated?.id || adjustmentId);
+      await loadAdjustments(adjustmentsSearchQuery);
+      if (updated?.sku) {
+        try {
+          const refreshedItem = await fetchJsonWithFallback(
+            `/erp/items/by-lookup/${encodeURIComponent(String(updated.sku))}`,
+            undefined,
+            "Failed to refresh adjusted item"
+          );
+          upsertPurchaseOrderCatalogItem(refreshedItem);
+        } catch {
+          // The adjustment is already posted; the broader reload below will pick up the item later.
+        }
+      }
+      await loadItems(searchTerm);
+      pushAlert(
+        "success",
+        `Adjustment ${updated?.id || adjustmentId} posted to item quantity.`
+      );
+      return updated;
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to approve adjustment.");
       return null;
     } finally {
       setSavingAdjustment(false);
@@ -4997,15 +5052,28 @@ function ErpApp({ currentUser, onLogout }) {
   }, [onLogout, shouldBlockEscapeLogout]);
 
   return (
-    <div className={`erp-shell ${isAnyModalOpen ? "is-modal-open" : ""}`.trim()}>
+    <div
+      className={`erp-shell ${isAnyModalOpen ? "is-modal-open" : ""} ${
+        isSidebarCollapsed ? "is-sidebar-collapsed" : ""
+      }`.trim()}
+    >
       <div className="erp-bg-gradient" />
       <aside className="erp-sidebar">
         <div className="erp-brand">
           <div className="erp-brand-badge">EM</div>
-          <div>
+          <div className="erp-brand-text">
             <p className="erp-brand-title">ParhelionERP</p>
             <p className="erp-brand-subtitle">Enterprise workspace</p>
           </div>
+          <button
+            type="button"
+            className="erp-sidebar-toggle"
+            onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isSidebarCollapsed ? <LayoutGrid size={14} /> : <PanelLeftClose size={14} />}
+          </button>
         </div>
 
         <nav className="erp-nav">
@@ -5029,11 +5097,13 @@ function ErpApp({ currentUser, onLogout }) {
                   setSelectedPriceChangeId(null);
                 }}
                 type="button"
+                title={isSidebarCollapsed ? item.label : undefined}
+                aria-label={item.label}
               >
                 <span className={`erp-nav-icon-wrap ${item.tone}`}>
                   <item.icon size={16} strokeWidth={2.1} className="erp-nav-icon" />
                 </span>
-                <span>{item.label}</span>
+                <span className="erp-nav-label">{item.label}</span>
               </button>
             </React.Fragment>
           ))}
@@ -5409,6 +5479,7 @@ function ErpApp({ currentUser, onLogout }) {
                     selectedAdjustmentId={selectedAdjustmentId}
                     onSelectAdjustment={setSelectedAdjustmentId}
                     onSaveAdjustment={handleSaveAdjustment}
+                    onApproveAdjustment={handleApproveAdjustment}
                     currentUserLabel={currentUserLabel}
                     inventoryItems={itemsRecords}
                     saving={savingAdjustment}

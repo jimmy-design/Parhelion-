@@ -3017,6 +3017,73 @@ async def create_erp_adjustment(payload: ERPAdjustmentCreate):
     return map_adjustment_for_erp(created)
 
 
+@app.post("/erp/adjustments/{adjustment_reference}/approve", response_model=ERPAdjustmentOut)
+async def approve_erp_adjustment(adjustment_reference: str, request: Request):
+    normalized_reference = str(adjustment_reference or "").strip()
+    if not normalized_reference:
+        raise HTTPException(status_code=400, detail="Adjustment reference is required")
+
+    reference_query = {"Reference": normalized_reference}
+    if normalized_reference.isdigit():
+        reference_query = {
+            "$or": [
+                {"Reference": normalized_reference},
+                {"AdjustmentID": int(normalized_reference)},
+            ]
+        }
+
+    adjustment_doc = await adjustment_collection.find_one(reference_query)
+    if not adjustment_doc:
+        raise HTTPException(status_code=404, detail="Adjustment not found")
+
+    current_status = normalize_adjustment_status(adjustment_doc.get("Status", "Pending"))
+    if current_status != "Pending":
+        raise HTTPException(status_code=400, detail=f"Adjustment is already {current_status.lower()}")
+
+    quantity = float(adjustment_doc.get("Quantity", 0) or 0)
+    if abs(quantity) <= 0:
+        raise HTTPException(status_code=400, detail="Adjustment quantity must be greater than zero")
+
+    store_id = parse_price_change_store_id(adjustment_doc.get("StoreID", 1), default=1)
+    sku = str(adjustment_doc.get("SKU", "") or "").strip()
+    if not sku:
+        raise HTTPException(status_code=400, detail="Adjustment needs a lookup code before approval")
+
+    target_item_collection = get_price_change_item_collection(store_id)
+    item_doc = await find_erp_item_by_lookup_or_id(sku, store_id)
+    if not item_doc:
+        raise HTTPException(status_code=404, detail=f"Item {sku} was not found")
+
+    now = datetime.utcnow()
+    approved_by = str(request.headers.get("x-erp-user", "") or "").strip()
+    if not approved_by:
+        approved_by = str(adjustment_doc.get("RequestedBy", "") or "").strip()
+
+    await target_item_collection.update_one(
+        {"_id": item_doc["_id"]},
+        {
+            "$inc": {"quantity": quantity},
+            "$set": {"LastUpdated": now},
+        },
+    )
+
+    await adjustment_collection.update_one(
+        {"_id": adjustment_doc["_id"]},
+        {
+            "$set": {
+                "Status": "Posted",
+                "ApprovedBy": approved_by,
+                "ApprovedAt": now,
+                "LastUpdated": now,
+                "Impact": f"Approved and posted {quantity:+g} units to item {sku}.",
+            }
+        },
+    )
+
+    updated = await adjustment_collection.find_one({"_id": adjustment_doc["_id"]})
+    return map_adjustment_for_erp(updated)
+
+
 @app.get("/erp/price-changes/history/{lookup_code}", response_model=List[ERPPriceChangeHistoryRow])
 async def list_erp_price_change_history(
     lookup_code: str,

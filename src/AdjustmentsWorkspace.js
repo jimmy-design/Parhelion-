@@ -171,6 +171,7 @@ export default function AdjustmentsWorkspace({
   selectedAdjustmentId,
   onSelectAdjustment,
   onSaveAdjustment,
+  onApproveAdjustment,
   currentUserLabel,
   inventoryItems,
   saving = false,
@@ -188,9 +189,8 @@ export default function AdjustmentsWorkspace({
 }) {
   const [draft, setDraft] = React.useState(() => createDraft(currentUserLabel));
   const [itemSearch, setItemSearch] = React.useState("");
-  const [showStatCards, setShowStatCards] = React.useState(false);
-  const [showSelectedDetail, setShowSelectedDetail] = React.useState(false);
   const [isQuickCaptureOpen, setIsQuickCaptureOpen] = React.useState(false);
+  const [contextMenu, setContextMenu] = React.useState(null);
   const itemInputRef = React.useRef(null);
   const notifyRef = React.useRef(onNotify);
   const recordsRef = React.useRef(summaryRecords);
@@ -271,50 +271,25 @@ export default function AdjustmentsWorkspace({
     };
   }, [isQuickCaptureOpen]);
 
-  const selectedRecord =
-    (Array.isArray(summaryRecords) ? summaryRecords : []).find(
-      (record) => String(record.id) === String(selectedAdjustmentId)
-    ) || null;
+  React.useEffect(() => {
+    if (!contextMenu) return undefined;
 
-  const summary = React.useMemo(() => {
-    const sourceRecords = Array.isArray(summaryRecords) ? summaryRecords : [];
-    const pendingCount = sourceRecords.filter(
-      (record) => String(record.status || "").toLowerCase() === "pending"
-    ).length;
-    const approvedCount = sourceRecords.filter(
-      (record) => String(record.status || "").toLowerCase() === "approved"
-    ).length;
-    const postedCount = sourceRecords.filter(
-      (record) => String(record.status || "").toLowerCase() === "posted"
-    ).length;
-    const netUnits = sourceRecords.reduce(
-      (sum, record) => sum + Number(record.quantity || 0),
-      0
-    );
-    const reductionUnits = sourceRecords.reduce((sum, record) => {
-      const quantity = Number(record.quantity || 0);
-      return quantity < 0 ? sum + Math.abs(quantity) : sum;
-    }, 0);
-
-    const reasonCounts = sourceRecords.reduce((accumulator, record) => {
-      const reason = String(record.reason || "Uncategorised").trim();
-      accumulator[reason] = (accumulator[reason] || 0) + 1;
-      return accumulator;
-    }, {});
-
-    const topReasons = Object.entries(reasonCounts)
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, 4);
-
-    return {
-      pendingCount,
-      approvedCount,
-      postedCount,
-      netUnits,
-      reductionUnits,
-      topReasons,
+    const closeMenu = () => setContextMenu(null);
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
     };
-  }, [summaryRecords]);
+
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [contextMenu]);
 
   const itemSearchResult = React.useMemo(
     () => buildAdjustmentItemSearchResult(inventoryItems, itemSearch),
@@ -348,9 +323,39 @@ export default function AdjustmentsWorkspace({
   };
 
   const handleAdjustmentSelect = (adjustmentId) => {
-    setShowStatCards(true);
-    setShowSelectedDetail(true);
     onSelectAdjustment(adjustmentId);
+  };
+
+  const handleAdjustmentContextMenu = (event, record) => {
+    if (saving) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectAdjustment(record.id);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      record,
+    });
+  };
+
+  const handleViewContextRecord = () => {
+    if (!contextMenu?.record) return;
+
+    const record = contextMenu.record;
+    notifyRef.current?.(
+      "info",
+      `${record.id}: ${record.item} | ${formatSignedQuantity(record.quantity)} units | ${record.status}`
+    );
+    setContextMenu(null);
+  };
+
+  const handleApproveContextRecord = async () => {
+    const record = contextMenu?.record;
+    if (!record) return;
+
+    setContextMenu(null);
+    await onApproveAdjustment?.(record);
   };
 
   const handleOpenQuickCapture = () => {
@@ -367,52 +372,8 @@ export default function AdjustmentsWorkspace({
     itemInputRef.current?.focus();
   };
 
-  const statCards = [
-    {
-      id: "pending",
-      label: "Pending",
-      value: summary.pendingCount,
-      hint: "Need review before posting",
-      tone: "is-warning",
-    },
-    {
-      id: "approved",
-      label: "Approved",
-      value: summary.approvedCount,
-      hint: "Awaiting final stock post",
-      tone: "is-info",
-    },
-    {
-      id: "posted",
-      label: "Posted",
-      value: summary.postedCount,
-      hint: "Already reflected in stock",
-      tone: "is-success",
-    },
-    {
-      id: "net-units",
-      label: "Net Units",
-      value: formatSignedQuantity(summary.netUnits),
-      hint: "Current movement balance",
-      tone:
-        summary.netUnits < 0 ? "is-negative" : summary.netUnits > 0 ? "is-positive" : "is-neutral",
-    },
-  ];
-
   return (
     <div className="erp-adjustments-layout">
-      {showStatCards && (
-        <section className="erp-adjustments-stats">
-          {statCards.map((card) => (
-            <article key={card.id} className={`erp-adjustments-stat-card ${card.tone}`.trim()}>
-              <span className="erp-adjustments-stat-label">{card.label}</span>
-              <strong className="erp-adjustments-stat-value">{card.value}</strong>
-              <small className="erp-adjustments-stat-trend">{card.hint}</small>
-            </article>
-          ))}
-        </section>
-      )}
-
       <div className="erp-adjustments-content">
         <section className="erp-adjustments-ledger-panel">
           <div className="erp-adjustments-ledger">
@@ -451,6 +412,7 @@ export default function AdjustmentsWorkspace({
                                 handleAdjustmentSelect(record.id);
                               }
                             }}
+                            onContextMenu={(event) => handleAdjustmentContextMenu(event, record)}
                             onKeyDown={(event) => {
                               if (saving) return;
                               if (event.key === "Enter" || event.key === " ") {
@@ -546,65 +508,28 @@ export default function AdjustmentsWorkspace({
             )}
           </div>
         </section>
-        {showSelectedDetail && selectedRecord && (
-          <section className="erp-adjustments-panel erp-adjustments-detail-panel">
-            <div className="erp-adjustments-panel-head">
-              <div className="erp-adjustments-panel-title">
-                <h4>Selected Detail</h4>
-                <p>Approval and stock impact snapshot</p>
-              </div>
-            </div>
-
-            <div className="erp-adjustments-detail-stack">
-              <div className="erp-adjustments-detail-grid">
-                <article className="erp-adjustments-detail-card">
-                  <span className="erp-adjustments-detail-label">Movement</span>
-                  <strong className="erp-adjustments-detail-value">
-                    {formatSignedQuantity(selectedRecord.quantity)} units
-                  </strong>
-                  <small>{selectedRecord.location}</small>
-                </article>
-                <article className="erp-adjustments-detail-card">
-                  <span className="erp-adjustments-detail-label">Raised By</span>
-                  <strong className="erp-adjustments-detail-value">{selectedRecord.raisedBy}</strong>
-                  <small>{formatDateTime(selectedRecord.requestedAt)}</small>
-                </article>
-                <article className="erp-adjustments-detail-card">
-                  <span className="erp-adjustments-detail-label">Status</span>
-                  <strong className="erp-adjustments-detail-value">{selectedRecord.status}</strong>
-                  <small>
-                    {selectedRecord.approvedBy
-                      ? `Reviewed by ${selectedRecord.approvedBy}`
-                      : "Waiting for reviewer"}
-                  </small>
-                </article>
-              </div>
-
-              <div className="erp-adjustments-detail-lower">
-                <div className="erp-adjustments-detail-note">
-                  <span className="erp-adjustments-detail-label">Audit Note</span>
-                  <p>{selectedRecord.note || "No note attached to this adjustment."}</p>
-                </div>
-
-                <div className="erp-adjustments-timeline">
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Request captured</strong>
-                    <span>{formatDateTime(selectedRecord.requestedAt)}</span>
-                  </div>
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Approval owner</strong>
-                    <span>{selectedRecord.approvedBy || "Awaiting assignment"}</span>
-                  </div>
-                  <div className="erp-adjustments-timeline-item">
-                    <strong>Stock posture</strong>
-                    <span>{selectedRecord.impact || "Impact note not yet captured"}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
       </div>
+
+      {contextMenu && (
+        <div
+          className="erp-row-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={String(contextMenu.record?.status || "").toLowerCase() !== "pending"}
+            onClick={handleApproveContextRecord}
+          >
+            Approve
+          </button>
+          <button type="button" role="menuitem" onClick={handleViewContextRecord}>
+            View
+          </button>
+        </div>
+      )}
 
       {isQuickCaptureOpen && (
         <div className="erp-modal-overlay erp-adjustments-modal-overlay" onClick={handleCloseQuickCapture}>
