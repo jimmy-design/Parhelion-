@@ -327,6 +327,13 @@
   --menu-icon-shadow-strong: rgba(230, 127, 46, 0.34);
 }
 
+.erp-nav-icon-wrap.tone-tools {
+  --menu-icon-start: #8ad4f8;
+  --menu-icon-end: #3d8ce0;
+  --menu-icon-shadow: rgba(65, 143, 218, 0.28);
+  --menu-icon-shadow-strong: rgba(65, 143, 218, 0.34);
+}
+
 .erp-nav-icon-wrap.tone-sales {
   --menu-icon-start: #72d96c;
   --menu-icon-end: #42b454;
@@ -1737,6 +1744,16 @@
 .erp-data-table.is-items-table thead th:nth-child(7),
 .erp-data-table.is-items-table tbody td:nth-child(7) {
   width: 12%;
+}
+
+.erp-data-table.is-shelf-label-table thead th,
+.erp-data-table.is-shelf-label-table tbody td {
+  width: 12%;
+}
+
+.erp-data-table.is-shelf-label-table thead th:nth-child(3),
+.erp-data-table.is-shelf-label-table tbody td:nth-child(3) {
+  width: 40%;
 }
 
 .erp-stock-cell {
@@ -3860,6 +3877,158 @@
   color: #ffffff;
 }
 
+.erp-shelf-label-overlay {
+  background: rgba(28, 36, 50, 0.24);
+}
+
+.erp-shelf-label-modal {
+  width: min(520px, calc(100vw - 48px));
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  contain: none;
+  border-radius: 22px;
+}
+
+.erp-shelf-label-modal .erp-modal-header {
+  min-height: 48px;
+  padding: 10px 20px;
+  border-radius: 22px 22px 0 0;
+}
+
+.erp-shelf-label-modal .erp-modal-header h3 {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.erp-shelf-label-modal .erp-modal-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 18px 18px;
+  border-top: 1px solid rgba(209, 216, 229, 0.92);
+  border-radius: 0 0 22px 22px;
+  background: rgba(248, 251, 255, 0.96);
+}
+
+.erp-shelf-label-modal .erp-footer-btn {
+  height: 32px;
+  min-width: 86px;
+  padding: 0 16px;
+  font-size: 12px;
+}
+
+.erp-shelf-label-preview-stage {
+  display: grid;
+  place-items: center;
+  padding: 24px 26px 28px;
+  background:
+    linear-gradient(180deg, #f8fbff 0%, #ffffff 54%, #eef3f8 100%);
+}
+
+.erp-shelf-label-preview {
+  width: 10cm;
+  height: 3cm;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.18cm 2.35cm;
+  align-items: stretch;
+  gap: 0.16cm;
+  padding: 0.2cm 0.22cm;
+  border: 1px solid #0f172a;
+  background:
+    linear-gradient(90deg, rgba(248, 250, 252, 0.82), #ffffff 34%, #ffffff),
+    #ffffff;
+  color: #0f172a;
+  box-shadow:
+    0 18px 38px rgba(27, 39, 59, 0.22),
+    inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.erp-shelf-label-main {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 0.08cm;
+}
+
+.erp-shelf-label-code,
+.erp-shelf-label-barcode {
+  display: block;
+  color: #263244;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.erp-shelf-label-code {
+  color: #05070b;
+  font-size: 0.42cm;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.erp-shelf-label-barcode {
+  font-size: 0.22cm;
+  font-weight: 700;
+}
+
+.erp-shelf-label-description {
+  display: -webkit-box;
+  color: #111827;
+  font-size: 0.34cm;
+  line-height: 1.08;
+  font-weight: 750;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.erp-shelf-label-price-block {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: 0.06cm;
+  border-left: 2px solid #111827;
+  padding-left: 0.14cm;
+}
+
+.erp-shelf-label-price-block span {
+  color: #475569;
+  font-size: 0.2cm;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.erp-shelf-label-price-block strong {
+  color: #020617;
+  font-size: 0.62cm;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.erp-shelf-label-qr {
+  justify-self: end;
+  align-self: center;
+  width: 2.16cm;
+  height: 2.16cm;
+  display: grid;
+  gap: 0;
+  padding: 0;
+  border: 1px solid #111111;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #111827;
+}
+
+.erp-shelf-label-qr span {
+  background: #ffffff;
+}
+
+.erp-shelf-label-qr span.is-dark {
+  background: #111111;
+}
+
 .erp-form-placeholder {
   grid-column: 1 / -1;
   border: 1px dashed rgba(150, 173, 218, 0.75);
@@ -3983,11 +4152,9 @@
     rgba(233, 239, 231, 0.22);
   --erp-glass-shadow: var(--pos-glass-shadow);
   --erp-glass-shadow-soft: var(--pos-glass-shadow-soft);
-  --erp-accent: linear-gradient(135deg, #2f6260 0%, #4b7c72 100%);
-  --erp-accent-strong:
-    linear-gradient(145deg, rgba(65, 167, 150, 0.92), rgba(46, 123, 114, 0.84)),
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 40%);
-  --erp-muted-accent: linear-gradient(135deg, #5b7183 0%, #425767 100%);
+  --erp-accent: var(--app-button-bg);
+  --erp-accent-strong: var(--app-button-bg);
+  --erp-muted-accent: var(--app-button-bg);
   background:
     radial-gradient(circle at 80% 20%, rgba(194, 206, 197, 0.24), transparent 24%),
     linear-gradient(135deg, #f4f4ef 0%, #ecefe8 42%, #e3e9e1 100%);
@@ -4120,8 +4287,8 @@
 }
 
 .erp-action-btn-secondary {
-  background: rgba(239, 243, 237, 0.78);
-  color: var(--pos-blue-dark);
+  background: var(--app-button-bg);
+  color: var(--app-button-text);
   box-shadow: var(--erp-glass-shadow-soft);
 }
 
@@ -5456,4 +5623,53 @@
   .erp-adjustments-stat-card {
     border-radius: 20px;
   }
+}
+
+/* Shared ERP button color */
+.erp-shell .erp-action-btn,
+.erp-shell .erp-action-btn-secondary,
+.erp-shell .erp-mini-btn,
+.erp-shell .erp-mini-btn-primary,
+.erp-shell .erp-mini-btn-danger,
+.erp-shell .erp-add-form button,
+.erp-shell .erp-footer-btn,
+.erp-shell .erp-footer-btn-primary,
+.erp-shell .erp-footer-btn-secondary,
+.erp-shell .erp-po-add-btn,
+.erp-shell .erp-window-btn,
+.erp-shell .erp-window-btn-close {
+  background: var(--app-button-bg) !important;
+  color: var(--app-button-text) !important;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.erp-shell .erp-action-btn:hover:not(:disabled),
+.erp-shell .erp-action-btn-secondary:hover:not(:disabled),
+.erp-shell .erp-mini-btn:hover:not(:disabled),
+.erp-shell .erp-mini-btn-primary:hover:not(:disabled),
+.erp-shell .erp-mini-btn-danger:hover:not(:disabled),
+.erp-shell .erp-add-form button:hover:not(:disabled),
+.erp-shell .erp-footer-btn:hover:not(:disabled),
+.erp-shell .erp-footer-btn-primary:hover:not(:disabled),
+.erp-shell .erp-footer-btn-secondary:hover:not(:disabled),
+.erp-shell .erp-po-add-btn:hover:not(:disabled),
+.erp-shell .erp-window-btn:hover:not(:disabled),
+.erp-shell .erp-window-btn-close:hover:not(:disabled) {
+  background: var(--app-button-bg-hover) !important;
+  color: var(--app-button-text) !important;
+}
+
+.erp-shell .erp-action-btn:active:not(:disabled),
+.erp-shell .erp-action-btn-secondary:active:not(:disabled),
+.erp-shell .erp-mini-btn:active:not(:disabled),
+.erp-shell .erp-mini-btn-primary:active:not(:disabled),
+.erp-shell .erp-mini-btn-danger:active:not(:disabled),
+.erp-shell .erp-add-form button:active:not(:disabled),
+.erp-shell .erp-footer-btn:active:not(:disabled),
+.erp-shell .erp-footer-btn-primary:active:not(:disabled),
+.erp-shell .erp-footer-btn-secondary:active:not(:disabled),
+.erp-shell .erp-po-add-btn:active:not(:disabled),
+.erp-shell .erp-window-btn:active:not(:disabled),
+.erp-shell .erp-window-btn-close:active:not(:disabled) {
+  background: var(--app-button-bg-active) !important;
 }

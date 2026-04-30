@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 import "./ErpApp.css";
 import PriceChangeWorkspace from "./PriceChangeWorkspace";
 import AdjustmentsWorkspace from "./AdjustmentsWorkspace";
@@ -7,6 +8,7 @@ import {
   LayoutDashboard,
   BriefcaseBusiness,
   Boxes,
+  Gift,
   ShoppingCart,
   Truck,
   Landmark,
@@ -36,6 +38,7 @@ import {
   LogOut,
   LayoutGrid,
   PanelLeftClose,
+  Wrench,
 } from "lucide-react";
 import { API_BASE_URL, apiFetch } from "./appConfig";
 
@@ -301,6 +304,24 @@ function findPurchaseOrderItemMatch(items, lookupValue) {
       return normalizedLookup === lookupCode || normalizedLookup === barcode;
     }) || null
   );
+}
+
+function buildLabelQrCells(value) {
+  const text = String(value || "EASTMATT").trim() || "EASTMATT";
+  const qr = QRCode.create(text, { errorCorrectionLevel: "M" });
+  const quietZone = 4;
+  const innerSize = qr.modules.size;
+  const outerSize = innerSize + quietZone * 2;
+  const cells = Array.from({ length: outerSize * outerSize }, (_, index) => {
+    const row = Math.floor(index / outerSize) - quietZone;
+    const column = (index % outerSize) - quietZone;
+    if (row < 0 || column < 0 || row >= innerSize || column >= innerSize) {
+      return false;
+    }
+    return Boolean(qr.modules.data[row * innerSize + column]);
+  });
+
+  return { size: outerSize, cells };
 }
 
 function buildPurchaseOrderEntryFromItem(item, quantityOrdered, defaultTaxRate = 16) {
@@ -1462,6 +1483,76 @@ function ErpApp({ currentUser, onLogout }) {
     ],
     []
   );
+  const toolsData = useMemo(
+    () => ({
+      "gift-voucher-tool": {
+        columns: ["Tool", "Purpose", "Status"],
+        rows: [["Gift Voucher Tool", "Create and manage customer gift vouchers.", "Ready"]],
+      },
+      "shelf-label-tool": {
+        columns: ["Tool", "Purpose", "Status"],
+        rows: [["Shelf Label Tool", "Prepare shelf edge labels for store displays.", "Ready"]],
+      },
+      "label-tool": {
+        columns: ["Tool", "Purpose", "Status"],
+        rows: [["Label Tool", "Print item labels and barcode stickers.", "Ready"]],
+      },
+      "customer-loyalty": {
+        columns: ["Tool", "Purpose", "Status"],
+        rows: [["Customer Loyalty", "Review loyalty setup, points, and member activity.", "Ready"]],
+      },
+      "promotions-kit": {
+        columns: ["Tool", "Purpose", "Status"],
+        rows: [["Promotions KIT", "Build and review promotion campaign kits.", "Ready"]],
+      },
+    }),
+    []
+  );
+  const toolsTabs = useMemo(
+    () => [
+      {
+        id: "gift-voucher-tool",
+        label: "Gift Voucher Tool",
+        hint: "Create, issue, and review customer gift vouchers.",
+        icon: Gift,
+        tone: "tone-sales",
+        actions: ["Open Tool", "New Voucher", "Refresh"],
+      },
+      {
+        id: "shelf-label-tool",
+        label: "Shelf Label Tool",
+        hint: "Prepare shelf labels for store display and price updates.",
+        icon: Tags,
+        tone: "tone-categories",
+        actions: ["Print Labels", "Preview", "Open Tool", "Refresh"],
+      },
+      {
+        id: "label-tool",
+        label: "Label Tool",
+        hint: "Design and print barcode or item labels.",
+        icon: PackageSearch,
+        tone: "tone-items",
+        actions: ["Open Tool", "Print Labels", "Refresh"],
+      },
+      {
+        id: "customer-loyalty",
+        label: "Customer Loyalty",
+        hint: "Manage loyalty programs, points, and member activity.",
+        icon: ContactRound,
+        tone: "tone-customers",
+        actions: ["Open Tool", "New Member", "Refresh"],
+      },
+      {
+        id: "promotions-kit",
+        label: "Promotions KIT",
+        hint: "Prepare campaign kits, promotion groups, and offer checks.",
+        icon: DollarSign,
+        tone: "tone-finance",
+        actions: ["Open Tool", "New Promotion", "Refresh"],
+      },
+    ],
+    []
+  );
   const userRoleOptions = useMemo(
     () => ["Cashier", "Supervisor", "Administrator"],
     []
@@ -1472,6 +1563,7 @@ function ErpApp({ currentUser, onLogout }) {
       { id: "dashboard", label: "Dashboard", hint: "Overview and KPI cards", icon: LayoutDashboard, tone: "tone-dashboard" },
       { id: "managment", label: "Managment", hint: "Business management controls", icon: BriefcaseBusiness, tone: "tone-managment" },
       { id: "inventory", label: "Inventory", hint: "Stock levels and adjustments", icon: Boxes, tone: "tone-inventory" },
+      { id: "tools", label: "Tools", hint: "Operational tools and label utilities", icon: Wrench, tone: "tone-tools" },
       { id: "sales", label: "Sales", hint: "Orders, invoices, returns", icon: ShoppingCart, tone: "tone-sales" },
       { id: "purchases", label: "Purchasing", hint: "Suppliers and POs", icon: Truck, tone: "tone-purchases" },
       { id: "finance", label: "Finance", hint: "Ledger, expenses, statements", icon: Landmark, tone: "tone-finance" },
@@ -1486,6 +1578,10 @@ function ErpApp({ currentUser, onLogout }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState("items");
   const [activeInventoryTab, setActiveInventoryTab] = useState("stock-overview");
+  const [activeToolsTab, setActiveToolsTab] = useState("gift-voucher-tool");
+  const [shelfLabelItems, setShelfLabelItems] = useState([]);
+  const [selectedShelfLabelRowId, setSelectedShelfLabelRowId] = useState("");
+  const [showShelfLabelPreview, setShowShelfLabelPreview] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [itemsRecords, setItemsRecords] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(false);
@@ -1624,13 +1720,23 @@ function ErpApp({ currentUser, onLogout }) {
 
   const activeItem = navItems.find((item) => item.id === activeNav) || navItems[0];
   const isInventoryWorkspace = activeNav === "inventory";
-  const isWorkspaceView = activeNav === "managment" || isInventoryWorkspace;
+  const isToolsWorkspace = activeNav === "tools";
+  const isWorkspaceView = activeNav === "managment" || isInventoryWorkspace || isToolsWorkspace;
   const selectedManagementTab =
     managementTabs.find((tab) => tab.id === activeManagementTab) || managementTabs[0];
   const selectedInventoryTab =
     inventoryTabs.find((tab) => tab.id === activeInventoryTab) || inventoryTabs[0];
-  const selectedWorkspaceTab = isInventoryWorkspace ? selectedInventoryTab : selectedManagementTab;
-  const workspaceTabs = isInventoryWorkspace ? inventoryTabs : managementTabs;
+  const selectedToolsTab = toolsTabs.find((tab) => tab.id === activeToolsTab) || toolsTabs[0];
+  const selectedWorkspaceTab = isInventoryWorkspace
+    ? selectedInventoryTab
+    : isToolsWorkspace
+    ? selectedToolsTab
+    : selectedManagementTab;
+  const workspaceTabs = isInventoryWorkspace
+    ? inventoryTabs
+    : isToolsWorkspace
+    ? toolsTabs
+    : managementTabs;
   const isItemsView = activeNav === "managment" && activeManagementTab === "items";
   const isSuppliersView = activeNav === "managment" && activeManagementTab === "suppliers";
   const isUsersView = activeNav === "managment" && activeManagementTab === "users";
@@ -1640,6 +1746,7 @@ function ErpApp({ currentUser, onLogout }) {
   const isReorderView = activeNav === "inventory" && activeInventoryTab === "reorder";
   const isAdjustmentsView = activeNav === "inventory" && activeInventoryTab === "adjustments";
   const isPriceChangeView = activeNav === "inventory" && activeInventoryTab === "price-change";
+  const isShelfLabelToolView = activeNav === "tools" && activeToolsTab === "shelf-label-tool";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
     Number(dashboardSummary.totalBaskets || 0) > 0 || Number(dashboardSummary.totalSales || 0) > 0;
@@ -1836,6 +1943,7 @@ function ErpApp({ currentUser, onLogout }) {
     showAddItemForm ||
     showAddSupplierForm ||
     showAddPurchaseOrderForm ||
+    showShelfLabelPreview ||
     showInventoryItemPropertiesModal ||
     showAddCategoryForm ||
     showAddUserForm ||
@@ -1866,6 +1974,19 @@ function ErpApp({ currentUser, onLogout }) {
     }),
     [itemsRecords]
   );
+  const shelfLabelToolData = useMemo(() => {
+    return {
+      columns: ["ITEM LOOKUP", "BARCODE", "DESCRIPTION", "PRICE", "New PRICE", "QUANTITY"],
+      rows: shelfLabelItems.map((item) => [
+        item.lookup_code || "",
+        item.alias || "",
+        item.description || "",
+        Number(item.price || item.sale_price || 0).toLocaleString(),
+        Number(item.sale_price || item.price || 0).toLocaleString(),
+        String(item.labelQuantity || 1),
+      ]),
+    };
+  }, [shelfLabelItems]);
 
   const usersTableData = useMemo(
     () => ({
@@ -2360,7 +2481,14 @@ function ErpApp({ currentUser, onLogout }) {
       : activeInventoryTab === "price-change"
       ? priceChangesTableData
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
-  const selectedWorkspaceData = isInventoryWorkspace ? selectedInventoryData : selectedManagementData;
+  const selectedToolsData = isShelfLabelToolView
+    ? shelfLabelToolData
+    : toolsData[activeToolsTab] || toolsData[toolsTabs[0].id];
+  const selectedWorkspaceData = isInventoryWorkspace
+    ? selectedInventoryData
+    : isToolsWorkspace
+    ? selectedToolsData
+    : selectedManagementData;
   const adjustmentsSearchContext = useMemo(
     () => resolveAdjustmentSearchContext(searchTerm, itemsRecords),
     [searchTerm, itemsRecords]
@@ -2379,6 +2507,11 @@ function ErpApp({ currentUser, onLogout }) {
   const filteredInventoryRows = (selectedInventoryData?.rows || []).filter((row) =>
     row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
   );
+  const filteredToolsRows = isShelfLabelToolView
+    ? selectedToolsData?.rows || []
+    : (selectedToolsData?.rows || []).filter((row) =>
+        row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
+      );
   const filteredItemsRecords = itemsRecords;
   const filteredSuppliersRecords = suppliersRecords;
   const filteredPurchaseOrdersRecords = purchaseOrdersRecords;
@@ -2401,6 +2534,8 @@ function ErpApp({ currentUser, onLogout }) {
     ? filteredCategoriesRecords.length
     : isInventoryWorkspace
     ? filteredInventoryRows.length
+    : isToolsWorkspace
+    ? filteredToolsRows.length
     : filteredManagementRows.length;
   const totalPages = Math.max(1, Math.ceil(totalRecords / rowsPerPage));
   const safePage = Math.min(currentPage, totalPages);
@@ -2409,6 +2544,7 @@ function ErpApp({ currentUser, onLogout }) {
   const pageEndRecord = Math.min(startIndex + rowsPerPage, totalRecords);
   const pagedManagementRows = filteredManagementRows.slice(startIndex, startIndex + rowsPerPage);
   const pagedInventoryRows = filteredInventoryRows.slice(startIndex, startIndex + rowsPerPage);
+  const pagedToolsRows = filteredToolsRows.slice(startIndex, startIndex + rowsPerPage);
   const pagedItemsRecords = filteredItemsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedSuppliersRecords = filteredSuppliersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPurchaseOrdersRecords = filteredPurchaseOrdersRecords.slice(startIndex, startIndex + rowsPerPage);
@@ -2423,6 +2559,18 @@ function ErpApp({ currentUser, onLogout }) {
   const currentUserRole = currentUser?.user_role || "Cashier";
   const fingerprintTargetUser =
     usersRecords.find((user) => Number(user.id) === Number(fingerprintUserId)) || null;
+  const selectedShelfLabelItem =
+    shelfLabelItems.find((item) => item.shelfLabelRowId === selectedShelfLabelRowId) || null;
+  const selectedShelfLabelQr = useMemo(
+    () =>
+      buildLabelQrCells(
+        selectedShelfLabelItem?.lookup_code ||
+          selectedShelfLabelItem?.alias ||
+          selectedShelfLabelItem?.enteredCode ||
+          ""
+      ),
+    [selectedShelfLabelItem]
+  );
 
   const pushAlert = (type, message) => {
     const id = Date.now() + Math.random();
@@ -3302,6 +3450,62 @@ function ErpApp({ currentUser, onLogout }) {
     pushAlert("info", `${actionLabel} for ${selectedInventoryTab.label} is ready for the next inventory screen.`);
   };
 
+  const handleToolsModuleAction = (actionLabel) => {
+    if (selectedToolsTab.id === "shelf-label-tool" && actionLabel === "Refresh") {
+      setShelfLabelItems([]);
+      setSelectedShelfLabelRowId("");
+      setShowShelfLabelPreview(false);
+      setSearchTerm("");
+      return;
+    }
+
+    if (selectedToolsTab.id === "shelf-label-tool" && actionLabel === "Preview") {
+      if (!selectedShelfLabelItem) {
+        pushAlert("warning", "Highlight a shelf label row before previewing.");
+        return;
+      }
+      setShowShelfLabelPreview(true);
+      return;
+    }
+
+    pushAlert("info", `${actionLabel} for ${selectedToolsTab.label} is ready for the next tools screen.`);
+  };
+
+  const addShelfLabelItem = (nextItem, enteredCode = "") => {
+    const shelfLabelRowId = `shelf-label-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setShelfLabelItems((prev) => [
+      ...prev,
+      {
+        ...nextItem,
+        enteredCode,
+        labelQuantity: 1,
+        shelfLabelRowId,
+      },
+    ]);
+    setSelectedShelfLabelRowId(shelfLabelRowId);
+  };
+
+  const handleAddShelfLabelSearchItem = async () => {
+    const lookupValue = searchTerm.trim();
+
+    if (!lookupValue) {
+      return;
+    }
+
+    try {
+      const matchedItem = await resolveShelfLabelLookupItem(lookupValue);
+      if (!matchedItem) {
+        pushAlert("warning", `No item found for item lookup code or barcode ${lookupValue}.`);
+        return;
+      }
+
+      addShelfLabelItem(matchedItem, lookupValue);
+      setSearchTerm("");
+    } catch (error) {
+      pushAlert("error", error.message || "Failed to add item to shelf labels.");
+    }
+  };
+
   const loadPurchaseOrders = async (search = "") => {
     setPurchaseOrdersLoading(true);
     setPurchaseOrdersError("");
@@ -3412,6 +3616,22 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     return remoteMatch;
+  };
+
+  const resolveShelfLabelLookupItem = async (lookupValue) => {
+    const directMatch = findPurchaseOrderItemMatch(itemsRecords, lookupValue);
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const query = lookupValue.trim();
+    const item = await fetchJsonWithFallback(
+      `/erp/items/by-lookup/${encodeURIComponent(query)}`,
+      undefined,
+      "Failed to find item"
+    );
+    upsertPurchaseOrderCatalogItem(item);
+    return item;
   };
 
   const closePurchaseOrderForm = () => {
@@ -4897,7 +5117,7 @@ function ErpApp({ currentUser, onLogout }) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeNav, activeManagementTab, activeInventoryTab, searchTerm, rowsPerPage]);
+  }, [activeNav, activeManagementTab, activeInventoryTab, activeToolsTab, searchTerm, rowsPerPage]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -5090,6 +5310,7 @@ function ErpApp({ currentUser, onLogout }) {
                   closeCategoryForm();
                   closePriceChangeComposer();
                   closeFingerprintModal();
+                  setShowShelfLabelPreview(false);
                   setSelectedSupplierId(null);
                   setSelectedUserId(null);
                   setSelectedCategoryId(null);
@@ -5177,6 +5398,8 @@ function ErpApp({ currentUser, onLogout }) {
                   }
                 } else if (isInventoryWorkspace) {
                   handleInventoryModuleAction(selectedInventoryTab.actions[0] || "Open module");
+                } else if (isToolsWorkspace) {
+                  handleToolsModuleAction(selectedToolsTab.actions[0] || "Open tool");
                 }
               }}
             >
@@ -5190,6 +5413,8 @@ function ErpApp({ currentUser, onLogout }) {
                 ? "New Category"
                 : isInventoryWorkspace
                 ? selectedInventoryTab.actions[0] || "New"
+                : isToolsWorkspace
+                ? selectedToolsTab.actions[0] || "Open Tool"
                 : "New"}
             </button>
             {onLogout && (
@@ -5208,7 +5433,13 @@ function ErpApp({ currentUser, onLogout }) {
           <section
             className="erp-management-tabs"
             role="tablist"
-            aria-label={isInventoryWorkspace ? "Inventory sub menu" : "Managment sub menu"}
+            aria-label={
+              isInventoryWorkspace
+                ? "Inventory sub menu"
+                : isToolsWorkspace
+                ? "Tools sub menu"
+                : "Managment sub menu"
+            }
           >
             {workspaceTabs.map((tab) => (
               <button
@@ -5217,6 +5448,8 @@ function ErpApp({ currentUser, onLogout }) {
                 onClick={() => {
                   if (isInventoryWorkspace) {
                     setActiveInventoryTab(tab.id);
+                  } else if (isToolsWorkspace) {
+                    setActiveToolsTab(tab.id);
                   } else {
                     setActiveManagementTab(tab.id);
                   }
@@ -5228,6 +5461,7 @@ function ErpApp({ currentUser, onLogout }) {
                   closeCategoryForm();
                   closePriceChangeComposer();
                   closeFingerprintModal();
+                  setShowShelfLabelPreview(false);
                   setSelectedSupplierId(null);
                   setSelectedUserId(null);
                   setSelectedCategoryId(null);
@@ -5260,7 +5494,17 @@ function ErpApp({ currentUser, onLogout }) {
                       type="text"
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder={`Search ${selectedWorkspaceTab.label.toLowerCase()}...`}
+                      onKeyDown={(e) => {
+                        if (isShelfLabelToolView && e.key === "Enter") {
+                          e.preventDefault();
+                          void handleAddShelfLabelSearchItem();
+                        }
+                      }}
+                      placeholder={
+                        isShelfLabelToolView
+                          ? "Enter item code or barcode..."
+                          : `Search ${selectedWorkspaceTab.label.toLowerCase()}...`
+                      }
                     />
                   </div>
                   {isItemsView && (
@@ -5389,11 +5633,25 @@ function ErpApp({ currentUser, onLogout }) {
                       ))}
                     </div>
                   )}
+                  {isToolsWorkspace && (
+                    <div className="erp-search-actions">
+                      {selectedToolsTab.actions.map((actionLabel, actionIndex) => (
+                        <button
+                          key={`${selectedToolsTab.id}-${actionLabel}`}
+                          type="button"
+                          className={`erp-mini-btn ${actionIndex === 0 ? "erp-mini-btn-primary" : ""}`.trim()}
+                          onClick={() => handleToolsModuleAction(actionLabel)}
+                        >
+                          {actionLabel}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {(isItemsView || isStockOverviewView || isReorderView) && itemsLoading && (
+                {(isItemsView || isStockOverviewView || isReorderView || isShelfLabelToolView) && itemsLoading && (
                   <p className="erp-table-status">Loading items...</p>
                 )}
-                {(isItemsView || isStockOverviewView || isReorderView) && itemsError && (
+                {(isItemsView || isStockOverviewView || isReorderView || isShelfLabelToolView) && itemsError && (
                   <p className="erp-table-status erp-table-status-error">{itemsError}</p>
                 )}
                 {isSuppliersView && suppliersLoading && <p className="erp-table-status">Loading suppliers...</p>}
@@ -5509,6 +5767,8 @@ function ErpApp({ currentUser, onLogout }) {
                         isSuppliersView ? "is-suppliers-table" : ""
                       } ${isStockOverviewView ? "is-stock-overview-table" : ""} ${
                         isReorderView ? "is-reorder-table" : ""
+                      } ${
+                        isShelfLabelToolView ? "is-shelf-label-table" : ""
                       }`.trim()}
                     >
                       <thead>
@@ -5712,6 +5972,34 @@ function ErpApp({ currentUser, onLogout }) {
                               </tr>
                             );
                           })
+                        : isToolsWorkspace
+                        ? pagedToolsRows.map((row, rowIndex) => (
+                            <tr
+                              key={
+                                isShelfLabelToolView
+                                  ? shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId ||
+                                    `${activeToolsTab}-${rowIndex}-${row[0] || ""}`
+                                  : `${activeToolsTab}-${rowIndex}-${row[0] || ""}`
+                              }
+                              className={
+                                isShelfLabelToolView &&
+                                shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId === selectedShelfLabelRowId
+                                  ? "is-selected-row"
+                                  : ""
+                              }
+                              onClick={() => {
+                                if (isShelfLabelToolView) {
+                                  setSelectedShelfLabelRowId(
+                                    shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId || ""
+                                  );
+                                }
+                              }}
+                            >
+                              {row.map((cell, cellIndex) => (
+                                <td key={`${activeToolsTab}-${rowIndex}-${cellIndex}`}>{cell}</td>
+                              ))}
+                            </tr>
+                          ))
                           : pagedManagementRows.map((row, rowIndex) => (
                               <tr key={`${activeManagementTab}-${rowIndex}`}>
                                 {row.map((cell, cellIndex) => (
@@ -5731,6 +6019,8 @@ function ErpApp({ currentUser, onLogout }) {
                           ? filteredCategoriesRecords.length === 0
                           : isInventoryWorkspace
                           ? filteredInventoryRows.length === 0
+                          : isToolsWorkspace
+                          ? filteredToolsRows.length === 0
                           : filteredManagementRows.length === 0) && (
                           <tr>
                             <td colSpan={selectedWorkspaceData.columns.length} className="erp-table-empty">
@@ -7075,6 +7365,75 @@ function ErpApp({ currentUser, onLogout }) {
                   )}
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {showShelfLabelPreview && selectedShelfLabelItem && (
+          <div className="erp-modal-overlay erp-shelf-label-overlay" onClick={() => setShowShelfLabelPreview(false)}>
+            <div className="erp-modal-card erp-shelf-label-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-modal-header">
+                <h3>Shelf Label Preview</h3>
+                <div className="erp-window-controls">
+                  <button
+                    type="button"
+                    className="erp-window-btn erp-window-btn-close"
+                    onClick={() => setShowShelfLabelPreview(false)}
+                    aria-label="Close preview"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+              <div className="erp-shelf-label-preview-stage">
+                <div className="erp-shelf-label-preview">
+                  <div className="erp-shelf-label-main">
+                    <span className="erp-shelf-label-code">
+                      {selectedShelfLabelItem.lookup_code || selectedShelfLabelItem.enteredCode || ""}
+                    </span>
+                    <strong className="erp-shelf-label-description">
+                      {selectedShelfLabelItem.description || "Item description"}
+                    </strong>
+                    <span className="erp-shelf-label-barcode">
+                      Barcode: {selectedShelfLabelItem.alias || selectedShelfLabelItem.enteredCode || ""}
+                    </span>
+                  </div>
+                  <div className="erp-shelf-label-price-block">
+                    <span>PRICE</span>
+                    <strong>
+                      {Number(
+                        selectedShelfLabelItem.sale_price || selectedShelfLabelItem.price || 0
+                      ).toLocaleString()}
+                    </strong>
+                  </div>
+                  <div
+                    className="erp-shelf-label-qr"
+                    aria-label="QR code"
+                    style={{
+                      gridTemplateColumns: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
+                      gridTemplateRows: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
+                    }}
+                  >
+                    {selectedShelfLabelQr.cells.map((isDark, index) => (
+                      <span
+                        key={`shelf-label-qr-${index}`}
+                        className={isDark ? "is-dark" : ""}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="erp-modal-actions">
+                <button
+                  type="button"
+                  className="erp-footer-btn erp-footer-btn-secondary"
+                  onClick={() => setShowShelfLabelPreview(false)}
+                >
+                  Close
+                </button>
+                <button type="button" className="erp-footer-btn erp-footer-btn-primary">
+                  Print Label
+                </button>
+              </div>
             </div>
           </div>
         )}

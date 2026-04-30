@@ -34,6 +34,7 @@ from database.mongodb import (
     branch_collection,
     BRANCH_COLLECTION_CANDIDATES,
     ensure_collection_exists,
+    ensure_register_collection_exists,
     get_store_collection,
     get_store_database_name,
 )
@@ -57,6 +58,7 @@ app = FastAPI(title="POS Backend API", version="1.0.2")
 @app.on_event("startup")
 async def ensure_required_mongo_collections():
     await ensure_collection_exists("adjustments")
+    await ensure_register_collection_exists()
 
 
 class ERPItemCreate(BaseModel):
