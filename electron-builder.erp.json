@@ -6,9 +6,13 @@
     "main": "electron/main-erp.js"
   },
   "win": {
+    "icon": "icon.ico",
     "artifactName": "erp-${version}.${ext}"
   },
   "nsis": {
+    "installerIcon": "icon.ico",
+    "uninstallerIcon": "icon.ico",
+    "installerHeaderIcon": "icon.ico",
     "oneClick": false,
     "perMachine": false
   }

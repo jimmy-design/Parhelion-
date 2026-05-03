@@ -26,6 +26,7 @@ class TransactionData(BaseModel):
     comment: str = "Transaction completed"
 
 class LoyaltyCustomer(BaseModel):
+    id: Optional[str] = None
     MemberID: Optional[str] = None
     Fullname: Optional[str] = ""
     Idnumber: Optional[str] = ""

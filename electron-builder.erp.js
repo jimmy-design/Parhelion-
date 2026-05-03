@@ -10,6 +10,7 @@ module.exports = {
   },
   win: {
     ...(baseConfig.win || {}),
+    icon: "icon.ico",
     artifactName: "erp-${version}.${ext}",
   },
   nsis: {

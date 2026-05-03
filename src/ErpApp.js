@@ -110,6 +110,20 @@ const EMPTY_SUPPLIER_FORM = {
   endDate: "",
 };
 
+const EMPTY_LOYALTY_CUSTOMER_FORM = {
+  id: "",
+  fullName: "",
+  loyaltyNo: "",
+  mobile: "",
+  idNumber: "",
+  email: "",
+  town: "",
+  physicalAddress: "",
+  points: "0",
+  balance: "0",
+  enabled: true,
+};
+
 const EMPTY_PRICE_CHANGE_PRICE = {
   default: "0",
   A: "0",
@@ -1540,7 +1554,7 @@ function ErpApp({ currentUser, onLogout }) {
         hint: "Manage loyalty programs, points, and member activity.",
         icon: ContactRound,
         tone: "tone-customers",
-        actions: ["Open Tool", "New Member", "Refresh"],
+        actions: ["Open Tool", "Add Member", "Refresh"],
       },
       {
         id: "promotions-kit",
@@ -1582,6 +1596,11 @@ function ErpApp({ currentUser, onLogout }) {
   const [shelfLabelItems, setShelfLabelItems] = useState([]);
   const [selectedShelfLabelRowId, setSelectedShelfLabelRowId] = useState("");
   const [showShelfLabelPreview, setShowShelfLabelPreview] = useState(false);
+  const [loyaltyCustomersRecords, setLoyaltyCustomersRecords] = useState([]);
+  const [loyaltyCustomersLoading, setLoyaltyCustomersLoading] = useState(false);
+  const [loyaltyCustomersError, setLoyaltyCustomersError] = useState("");
+  const [showAddLoyaltyCustomerForm, setShowAddLoyaltyCustomerForm] = useState(false);
+  const [savingLoyaltyCustomer, setSavingLoyaltyCustomer] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [itemsRecords, setItemsRecords] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(false);
@@ -1695,6 +1714,9 @@ function ErpApp({ currentUser, onLogout }) {
   const itemFormRequestRef = useRef(0);
   const [newItemForm, setNewItemForm] = useState({ ...EMPTY_ITEM_FORM });
   const [newSupplierForm, setNewSupplierForm] = useState({ ...EMPTY_SUPPLIER_FORM });
+  const [newLoyaltyCustomerForm, setNewLoyaltyCustomerForm] = useState({
+    ...EMPTY_LOYALTY_CUSTOMER_FORM,
+  });
   const [newPurchaseOrderForm, setNewPurchaseOrderForm] = useState(() =>
     createEmptyPurchaseOrderForm("")
   );
@@ -1747,6 +1769,7 @@ function ErpApp({ currentUser, onLogout }) {
   const isAdjustmentsView = activeNav === "inventory" && activeInventoryTab === "adjustments";
   const isPriceChangeView = activeNav === "inventory" && activeInventoryTab === "price-change";
   const isShelfLabelToolView = activeNav === "tools" && activeToolsTab === "shelf-label-tool";
+  const isCustomerLoyaltyView = activeNav === "tools" && activeToolsTab === "customer-loyalty";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
     Number(dashboardSummary.totalBaskets || 0) > 0 || Number(dashboardSummary.totalSales || 0) > 0;
@@ -1944,6 +1967,7 @@ function ErpApp({ currentUser, onLogout }) {
     showAddSupplierForm ||
     showAddPurchaseOrderForm ||
     showShelfLabelPreview ||
+    showAddLoyaltyCustomerForm ||
     showInventoryItemPropertiesModal ||
     showAddCategoryForm ||
     showAddUserForm ||
@@ -1987,6 +2011,24 @@ function ErpApp({ currentUser, onLogout }) {
       ]),
     };
   }, [shelfLabelItems]);
+  const loyaltyCustomersTableData = useMemo(
+    () => ({
+      columns: ["ID", "Name", "Loyalty No", "Mobile", "ID Number", "Points", "Balance", "Status"],
+      rows: loyaltyCustomersRecords.map((customer) => [
+        customer.id ?? customer.ID ?? customer.MemberID ?? customer.member_id ?? "",
+        customer.Fullname || customer.fullname || customer.name || "",
+        customer.Loyaltyno || customer.loyalty_no || "",
+        customer.Mobile || customer.mobile || "",
+        customer.Idnumber || customer.id_number || "",
+        Number(customer.Points || 0).toLocaleString(),
+        Number(customer.Balance || 0).toLocaleString(),
+        Number(customer.Enabled ?? 1) === 1 && Number(customer.Blocked ?? 0) !== 1
+          ? "Active"
+          : "Inactive",
+      ]),
+    }),
+    [loyaltyCustomersRecords]
+  );
 
   const usersTableData = useMemo(
     () => ({
@@ -2483,6 +2525,8 @@ function ErpApp({ currentUser, onLogout }) {
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
   const selectedToolsData = isShelfLabelToolView
     ? shelfLabelToolData
+    : isCustomerLoyaltyView
+    ? loyaltyCustomersTableData
     : toolsData[activeToolsTab] || toolsData[toolsTabs[0].id];
   const selectedWorkspaceData = isInventoryWorkspace
     ? selectedInventoryData
@@ -3451,6 +3495,27 @@ function ErpApp({ currentUser, onLogout }) {
   };
 
   const handleToolsModuleAction = (actionLabel) => {
+    if (
+      selectedToolsTab.id === "customer-loyalty" &&
+      (actionLabel === "Add Member" || actionLabel === "New Member")
+    ) {
+      setLoyaltyCustomersError("");
+      setShowAddLoyaltyCustomerForm(true);
+      setNewLoyaltyCustomerForm({ ...EMPTY_LOYALTY_CUSTOMER_FORM });
+      return;
+    }
+
+    if (selectedToolsTab.id === "customer-loyalty" && actionLabel === "Refresh") {
+      loadLoyaltyCustomers();
+      return;
+    }
+
+    if (selectedToolsTab.id === "customer-loyalty" && actionLabel === "Open Tool") {
+      loadLoyaltyCustomers();
+      pushAlert("success", "Customer loyalty is connected to loyaltycustomers.");
+      return;
+    }
+
     if (selectedToolsTab.id === "shelf-label-tool" && actionLabel === "Refresh") {
       setShelfLabelItems([]);
       setSelectedShelfLabelRowId("");
@@ -3469,6 +3534,80 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     pushAlert("info", `${actionLabel} for ${selectedToolsTab.label} is ready for the next tools screen.`);
+  };
+
+  const closeLoyaltyCustomerForm = () => {
+    setShowAddLoyaltyCustomerForm(false);
+    setSavingLoyaltyCustomer(false);
+    setLoyaltyCustomersError("");
+    setNewLoyaltyCustomerForm({ ...EMPTY_LOYALTY_CUSTOMER_FORM });
+  };
+
+  const updateLoyaltyCustomerForm = (field, value) => {
+    setNewLoyaltyCustomerForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleAddLoyaltyCustomer = async (event) => {
+    event.preventDefault();
+
+    const fullName = newLoyaltyCustomerForm.fullName.trim();
+    const mobile = newLoyaltyCustomerForm.mobile.trim();
+    const idNumber = newLoyaltyCustomerForm.idNumber.trim();
+
+    if (!fullName) {
+      setLoyaltyCustomersError("Full name is required.");
+      pushAlert("warning", "Full name is required for a loyalty customer.");
+      return;
+    }
+
+    if (!mobile && !idNumber) {
+      setLoyaltyCustomersError("Mobile or ID number is required.");
+      pushAlert("warning", "Enter a mobile number or ID number for the loyalty customer.");
+      return;
+    }
+
+    setSavingLoyaltyCustomer(true);
+    setLoyaltyCustomersError("");
+    try {
+      const payload = {
+        Fullname: fullName,
+        Mobile: mobile,
+        Idnumber: idNumber,
+        EmailAdd: newLoyaltyCustomerForm.email.trim(),
+        Town: newLoyaltyCustomerForm.town.trim(),
+        Physicaladdress: newLoyaltyCustomerForm.physicalAddress.trim(),
+        Points: 0,
+        Balance: 0,
+        Bal2: 0,
+        TotalCredit: 0,
+        TotalDebit: 0,
+        Enabled: newLoyaltyCustomerForm.enabled ? 1 : 0,
+        Blocked: 0,
+        AcceptTerms: 1,
+        Nationality: "Kenyan",
+        uuser: currentUser?.name || currentUser?.number || "admin",
+      };
+
+      await fetchJsonWithFallback(
+        "/loyalty/customers/add",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        "Failed to save loyalty customer"
+      );
+
+      pushAlert("success", "Loyalty customer saved.");
+      closeLoyaltyCustomerForm();
+      await loadLoyaltyCustomers();
+    } catch (error) {
+      const message = error.message || "Failed to save loyalty customer";
+      setLoyaltyCustomersError(message);
+      pushAlert("error", message);
+    } finally {
+      setSavingLoyaltyCustomer(false);
+    }
   };
 
   const addShelfLabelItem = (nextItem, enteredCode = "") => {
@@ -4161,6 +4300,26 @@ function ErpApp({ currentUser, onLogout }) {
       setSuppliersRecords([]);
     } finally {
       setSuppliersLoading(false);
+    }
+  };
+
+  const loadLoyaltyCustomers = async () => {
+    setLoyaltyCustomersLoading(true);
+    setLoyaltyCustomersError("");
+    try {
+      const data = await fetchJsonWithFallback(
+        "/loyalty/customers/all",
+        undefined,
+        "Failed to load loyalty customers"
+      );
+      setLoyaltyCustomersRecords(Array.isArray(data?.customers) ? data.customers : []);
+    } catch (error) {
+      const message = error.message || "Failed to load loyalty customers";
+      setLoyaltyCustomersError(message);
+      pushAlert("error", message);
+      setLoyaltyCustomersRecords([]);
+    } finally {
+      setLoyaltyCustomersLoading(false);
     }
   };
 
@@ -5079,6 +5238,11 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isPurchaseOrdersView, searchTerm]);
 
   useEffect(() => {
+    if (!isCustomerLoyaltyView) return;
+    loadLoyaltyCustomers();
+  }, [isCustomerLoyaltyView]);
+
+  useEffect(() => {
     if (!isAdjustmentsView) return;
 
     const timer = setTimeout(() => {
@@ -5308,6 +5472,7 @@ function ErpApp({ currentUser, onLogout }) {
                   closePurchaseOrderForm();
                   closeUserForm();
                   closeCategoryForm();
+                  closeLoyaltyCustomerForm();
                   closePriceChangeComposer();
                   closeFingerprintModal();
                   setShowShelfLabelPreview(false);
@@ -5396,6 +5561,12 @@ function ErpApp({ currentUser, onLogout }) {
                   } else {
                     openCreateCategoryModal();
                   }
+                } else if (isCustomerLoyaltyView) {
+                  if (showAddLoyaltyCustomerForm) {
+                    closeLoyaltyCustomerForm();
+                  } else {
+                    handleToolsModuleAction("Add Member");
+                  }
                 } else if (isInventoryWorkspace) {
                   handleInventoryModuleAction(selectedInventoryTab.actions[0] || "Open module");
                 } else if (isToolsWorkspace) {
@@ -5413,6 +5584,8 @@ function ErpApp({ currentUser, onLogout }) {
                 ? "New Category"
                 : isInventoryWorkspace
                 ? selectedInventoryTab.actions[0] || "New"
+                : isCustomerLoyaltyView
+                ? "Add Member"
                 : isToolsWorkspace
                 ? selectedToolsTab.actions[0] || "Open Tool"
                 : "New"}
@@ -5459,6 +5632,7 @@ function ErpApp({ currentUser, onLogout }) {
                   closePurchaseOrderForm();
                   closeUserForm();
                   closeCategoryForm();
+                  closeLoyaltyCustomerForm();
                   closePriceChangeComposer();
                   closeFingerprintModal();
                   setShowShelfLabelPreview(false);
@@ -5666,6 +5840,10 @@ function ErpApp({ currentUser, onLogout }) {
                 {isUsersView && usersError && <p className="erp-table-status erp-table-status-error">{usersError}</p>}
                 {isCategoriesView && categoriesLoading && <p className="erp-table-status">Loading categories...</p>}
                 {isCategoriesView && categoriesError && <p className="erp-table-status erp-table-status-error">{categoriesError}</p>}
+                {isCustomerLoyaltyView && loyaltyCustomersLoading && <p className="erp-table-status">Loading loyalty customers...</p>}
+                {isCustomerLoyaltyView && loyaltyCustomersError && (
+                  <p className="erp-table-status erp-table-status-error">{loyaltyCustomersError}</p>
+                )}
                 {isPriceChangeView ? (
                   <PriceChangeWorkspace
                     summary={priceChangeSummary}
@@ -5769,6 +5947,8 @@ function ErpApp({ currentUser, onLogout }) {
                         isReorderView ? "is-reorder-table" : ""
                       } ${
                         isShelfLabelToolView ? "is-shelf-label-table" : ""
+                      } ${
+                        isCustomerLoyaltyView ? "is-loyalty-customers-table" : ""
                       }`.trim()}
                     >
                       <thead>
@@ -7434,6 +7614,113 @@ function ErpApp({ currentUser, onLogout }) {
                   Print Label
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+        {isCustomerLoyaltyView && showAddLoyaltyCustomerForm && (
+          <div className="erp-modal-overlay" onClick={closeLoyaltyCustomerForm}>
+            <div className="erp-modal-card erp-loyalty-customer-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-modal-header">
+                <h3>Add Loyalty Member</h3>
+                <div className="erp-window-controls">
+                  <button
+                    type="button"
+                    className="erp-window-btn erp-window-btn-close"
+                    onClick={closeLoyaltyCustomerForm}
+                    aria-label="Cancel"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+              <form className="erp-add-form-modal erp-loyalty-customer-form" onSubmit={handleAddLoyaltyCustomer} noValidate>
+                <div className="erp-form-field is-span-2">
+                  <label>Full Name</label>
+                  <input
+                    type="text"
+                    placeholder="Customer full name"
+                    value={newLoyaltyCustomerForm.fullName}
+                    onChange={(e) => updateLoyaltyCustomerForm("fullName", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Mobile</label>
+                  <input
+                    type="tel"
+                    placeholder="07..."
+                    value={newLoyaltyCustomerForm.mobile}
+                    onChange={(e) => updateLoyaltyCustomerForm("mobile", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>ID Number</label>
+                  <input
+                    type="text"
+                    placeholder="National ID"
+                    value={newLoyaltyCustomerForm.idNumber}
+                    onChange={(e) => updateLoyaltyCustomerForm("idNumber", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    placeholder="email@domain.com"
+                    value={newLoyaltyCustomerForm.email}
+                    onChange={(e) => updateLoyaltyCustomerForm("email", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Town</label>
+                  <input
+                    type="text"
+                    placeholder="Town"
+                    value={newLoyaltyCustomerForm.town}
+                    onChange={(e) => updateLoyaltyCustomerForm("town", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field is-span-2">
+                  <label>Physical Address</label>
+                  <input
+                    type="text"
+                    placeholder="Address"
+                    value={newLoyaltyCustomerForm.physicalAddress}
+                    onChange={(e) => updateLoyaltyCustomerForm("physicalAddress", e.target.value)}
+                  />
+                </div>
+                <label className="erp-switch-field">
+                  <span>Enabled</span>
+                  <span className="erp-switch">
+                    <input
+                      type="checkbox"
+                      checked={newLoyaltyCustomerForm.enabled}
+                      onChange={(e) => updateLoyaltyCustomerForm("enabled", e.target.checked)}
+                    />
+                    <span className="erp-switch-slider" />
+                  </span>
+                </label>
+                {loyaltyCustomersError && (
+                  <div className="erp-form-placeholder erp-loyalty-form-error">
+                    {loyaltyCustomersError}
+                  </div>
+                )}
+                <div className="erp-modal-actions">
+                  <button
+                    type="button"
+                    className="erp-footer-btn erp-footer-btn-secondary"
+                    onClick={closeLoyaltyCustomerForm}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="erp-footer-btn erp-footer-btn-primary"
+                    disabled={savingLoyaltyCustomer}
+                  >
+                    {savingLoyaltyCustomer ? "Saving..." : "Save Member"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

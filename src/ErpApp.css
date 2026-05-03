@@ -1756,6 +1756,43 @@
   width: 40%;
 }
 
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(1),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(1) {
+  width: 8%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(2),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(2) {
+  width: 26%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(3),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(3) {
+  width: 18%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(4),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(4),
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(7),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(7) {
+  width: 11%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(5),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(5) {
+  width: 11%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(6),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(6) {
+  width: 8%;
+}
+
+.erp-data-table.is-loyalty-customers-table thead th:nth-child(8),
+.erp-data-table.is-loyalty-customers-table tbody td:nth-child(8) {
+  width: 7%;
+}
+
 .erp-stock-cell {
   padding-right: 14px;
 }
@@ -2993,6 +3030,20 @@
     0 10px 24px rgba(139, 163, 199, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(30px) saturate(165%);
+}
+
+.erp-loyalty-customer-modal-card {
+  width: min(680px, calc(100vw - 64px));
+  max-width: 680px;
+}
+
+.erp-loyalty-customer-form {
+  max-height: min(72vh, 620px);
+}
+
+.erp-loyalty-form-error {
+  grid-column: span 2;
+  color: #9d3040;
 }
 
 .erp-modal-card.is-minimized {

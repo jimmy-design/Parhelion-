@@ -4168,6 +4168,35 @@ async def get_all_loyalty_customers():
     
     # ==================== M-PESA STK PUSH ====================
 
+
+async def get_next_loyalty_customer_id():
+    cursor = loyalty_customers_collection.find({}, {"id": 1, "ID": 1, "MemberID": 1})
+    customers = await cursor.to_list(length=None)
+    max_id = 0
+
+    for customer in customers:
+        raw_id = customer.get("id") or customer.get("ID") or customer.get("MemberID")
+        try:
+            numeric_id = int(str(raw_id).strip())
+        except (TypeError, ValueError):
+            continue
+        max_id = max(max_id, numeric_id)
+
+    return str(max_id + 1)
+
+
+def build_loyalty_lookup_clauses(customer: LoyaltyCustomer):
+    lookup_clauses = []
+    if customer.id:
+        lookup_clauses.append({"id": customer.id})
+    if customer.Idnumber:
+        lookup_clauses.append({"Idnumber": customer.Idnumber})
+    if customer.Loyaltyno:
+        lookup_clauses.append({"Loyaltyno": customer.Loyaltyno})
+    if customer.Mobile:
+        lookup_clauses.append({"Mobile": customer.Mobile})
+    return lookup_clauses
+
 from fastapi import Request
 import requests, base64
 from datetime import datetime
@@ -4239,14 +4268,15 @@ async def stkpush(request: Request):
 async def create_loyalty_customer(customer: LoyaltyCustomer):
     """Create or update a loyalty customer"""
     try:
+        lookup_clauses = build_loyalty_lookup_clauses(customer)
+        if not lookup_clauses:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter at least one customer identifier"
+            )
+
         # Check if customer already exists
-        existing_customer = await loyalty_customers_collection.find_one({
-            "$or": [
-                {"Idnumber": customer.Idnumber} if customer.Idnumber else {},
-                {"Loyaltyno": customer.Loyaltyno} if customer.Loyaltyno else {},
-                {"Mobile": customer.Mobile} if customer.Mobile else {}
-            ]
-        })
+        existing_customer = await loyalty_customers_collection.find_one({"$or": lookup_clauses})
         
         customer_dict = customer.dict()
         
@@ -4261,9 +4291,47 @@ async def create_loyalty_customer(customer: LoyaltyCustomer):
             # Create new customer
             result = await loyalty_customers_collection.insert_one(customer_dict)
             return {"success": True, "message": "Customer created successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error creating/updating loyalty customer: {e}")
         raise HTTPException(status_code=500, detail="Failed to create/update customer")
+
+
+@app.post("/loyalty/customers/add")
+async def add_loyalty_customer(customer: LoyaltyCustomer):
+    """Insert a new loyalty customer without overwriting existing records"""
+    try:
+        lookup_clauses = build_loyalty_lookup_clauses(customer)
+        if not lookup_clauses:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter a mobile number, ID number, loyalty number, or customer ID"
+            )
+
+        existing_customer = await loyalty_customers_collection.find_one({"$or": lookup_clauses})
+        if existing_customer:
+            raise HTTPException(
+                status_code=409,
+                detail="A loyalty customer with those details already exists"
+            )
+
+        customer_dict = customer.dict()
+        if not customer_dict.get("id"):
+            customer_dict["id"] = await get_next_loyalty_customer_id()
+
+        await loyalty_customers_collection.insert_one(customer_dict)
+        customer_dict.pop("_id", None)
+        return {
+            "success": True,
+            "message": "Customer created successfully",
+            "customer": customer_dict,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error adding loyalty customer: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add customer")
 
 @app.post("/loyalty/award-points")
 async def award_loyalty_points(loyalty_transaction: LoyaltyTransaction):
