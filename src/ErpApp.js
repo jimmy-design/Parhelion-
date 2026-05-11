@@ -338,6 +338,173 @@ function buildLabelQrCells(value) {
   return { size: outerSize, cells };
 }
 
+const CODE128_PATTERNS = [
+  "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+  "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+  "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+  "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+  "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+  "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+  "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+  "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+  "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+  "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+  "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
+];
+
+function normalizeCode128Value(value) {
+  return String(value || "EASTMATT")
+    .trim()
+    .split("")
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code <= 126;
+    })
+    .join("") || "EASTMATT";
+}
+
+function buildCode128Barcode(value) {
+  const text = normalizeCode128Value(value);
+  const codes = [104, ...text.split("").map((character) => character.charCodeAt(0) - 32)];
+  const checksum = codes.reduce(
+    (total, code, index) => total + (index === 0 ? code : code * index),
+    0
+  ) % 103;
+  const encodedCodes = [...codes, checksum, 106];
+
+  return {
+    text,
+    bars: encodedCodes.flatMap((code) =>
+      String(CODE128_PATTERNS[code] || "").split("").map((width, index) => ({
+        width: Number(width) || 1,
+        isBar: index % 2 === 0,
+      }))
+    ),
+  };
+}
+
+function renderBarcodeHtml(value) {
+  return buildCode128Barcode(value).bars
+    .map(
+      (bar) =>
+        `<span class="${bar.isBar ? "bar" : "space"}" style="flex-grow:${bar.width}"></span>`
+    )
+    .join("");
+}
+
+function buildLabelStickerPrintHtml(item, autoPrint = true) {
+  const barcodeValue = normalizeCode128Value(item?.lookup_code || item?.enteredCode || item?.alias || "");
+  const description = item?.description || "Item description";
+  const price = Number(item?.sale_price || item?.price || 0).toLocaleString();
+  const stickersHtml = Array.from({ length: 3 }, (_, index) => `
+    <section class="sticker" aria-label="Sticker ${index + 1}">
+      <div class="description">${escapeHtml(description)}</div>
+      <div class="price">${escapeHtml(price)}</div>
+      <div class="barcode" aria-label="${escapeHtml(barcodeValue)}">${renderBarcodeHtml(barcodeValue)}</div>
+      <div class="code">${escapeHtml(barcodeValue)}</div>
+    </section>
+  `).join("");
+  const autoPrintScript = autoPrint
+    ? `
+      <script>
+        window.addEventListener("load", function () {
+          setTimeout(function () {
+            window.focus();
+            window.print();
+          }, 180);
+        });
+      </script>
+    `
+    : "";
+
+  return `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>Item Stickers - ${escapeHtml(barcodeValue)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          @page { size: 10cm 3cm; margin: 0; }
+          body {
+            margin: 0;
+            background: #ffffff;
+            color: #000000;
+            font-family: Arial, Helvetica, sans-serif;
+          }
+          .sheet {
+            width: 10cm;
+            height: 3cm;
+            display: grid;
+            grid-template-columns: repeat(3, 3cm);
+            justify-content: space-between;
+            align-items: stretch;
+            overflow: hidden;
+          }
+          .sticker {
+            width: 3cm;
+            height: 3cm;
+            display: grid;
+            grid-template-rows: 0.66cm 0.5cm 1.08cm 0.32cm;
+            align-items: center;
+            padding: 0.12cm 0.1cm 0.08cm;
+            overflow: hidden;
+            break-inside: avoid;
+          }
+          .description {
+            font-size: 0.24cm;
+            line-height: 1.05;
+            font-weight: 700;
+            text-align: center;
+            overflow: hidden;
+          }
+          .price {
+            font-size: 0.4cm;
+            line-height: 1;
+            font-weight: 900;
+            text-align: center;
+          }
+          .barcode {
+            width: 100%;
+            height: 0.92cm;
+            display: flex;
+            align-items: stretch;
+            background: #ffffff;
+          }
+          .bar { background: #000000; }
+          .space { background: #ffffff; }
+          .code {
+            min-width: 0;
+            font-size: 0.2cm;
+            line-height: 1;
+            font-weight: 700;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          @media screen {
+            body {
+              min-height: 100vh;
+              display: grid;
+              place-items: center;
+              background: #eef2f7;
+            }
+            .sheet {
+              background: #ffffff;
+              box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="sheet">${stickersHtml}</main>
+        ${autoPrintScript}
+      </body>
+    </html>
+  `;
+}
+
 function buildPurchaseOrderEntryFromItem(item, quantityOrdered, defaultTaxRate = 16) {
   return {
     ...createPurchaseOrderEntryDraft(),
@@ -1546,7 +1713,7 @@ function ErpApp({ currentUser, onLogout }) {
         hint: "Design and print barcode or item labels.",
         icon: PackageSearch,
         tone: "tone-items",
-        actions: ["Open Tool", "Print Labels", "Refresh"],
+        actions: ["Print Labels", "Preview", "Open Tool", "Refresh"],
       },
       {
         id: "customer-loyalty",
@@ -1769,6 +1936,8 @@ function ErpApp({ currentUser, onLogout }) {
   const isAdjustmentsView = activeNav === "inventory" && activeInventoryTab === "adjustments";
   const isPriceChangeView = activeNav === "inventory" && activeInventoryTab === "price-change";
   const isShelfLabelToolView = activeNav === "tools" && activeToolsTab === "shelf-label-tool";
+  const isLabelToolView = activeNav === "tools" && activeToolsTab === "label-tool";
+  const isItemLabelToolView = isShelfLabelToolView || isLabelToolView;
   const isCustomerLoyaltyView = activeNav === "tools" && activeToolsTab === "customer-loyalty";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
@@ -2523,7 +2692,7 @@ function ErpApp({ currentUser, onLogout }) {
       : activeInventoryTab === "price-change"
       ? priceChangesTableData
       : inventoryData[activeInventoryTab] || inventoryData[inventoryTabs[0].id];
-  const selectedToolsData = isShelfLabelToolView
+  const selectedToolsData = isItemLabelToolView
     ? shelfLabelToolData
     : isCustomerLoyaltyView
     ? loyaltyCustomersTableData
@@ -2551,7 +2720,7 @@ function ErpApp({ currentUser, onLogout }) {
   const filteredInventoryRows = (selectedInventoryData?.rows || []).filter((row) =>
     row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
   );
-  const filteredToolsRows = isShelfLabelToolView
+  const filteredToolsRows = isItemLabelToolView
     ? selectedToolsData?.rows || []
     : (selectedToolsData?.rows || []).filter((row) =>
         row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
@@ -2611,6 +2780,16 @@ function ErpApp({ currentUser, onLogout }) {
         selectedShelfLabelItem?.lookup_code ||
           selectedShelfLabelItem?.alias ||
           selectedShelfLabelItem?.enteredCode ||
+          ""
+      ),
+    [selectedShelfLabelItem]
+  );
+  const selectedLabelStickerBarcode = useMemo(
+    () =>
+      buildCode128Barcode(
+        selectedShelfLabelItem?.lookup_code ||
+          selectedShelfLabelItem?.enteredCode ||
+          selectedShelfLabelItem?.alias ||
           ""
       ),
     [selectedShelfLabelItem]
@@ -3516,7 +3695,7 @@ function ErpApp({ currentUser, onLogout }) {
       return;
     }
 
-    if (selectedToolsTab.id === "shelf-label-tool" && actionLabel === "Refresh") {
+    if (isItemLabelToolView && actionLabel === "Refresh") {
       setShelfLabelItems([]);
       setSelectedShelfLabelRowId("");
       setShowShelfLabelPreview(false);
@@ -3524,9 +3703,9 @@ function ErpApp({ currentUser, onLogout }) {
       return;
     }
 
-    if (selectedToolsTab.id === "shelf-label-tool" && actionLabel === "Preview") {
+    if (isItemLabelToolView && (actionLabel === "Preview" || actionLabel === "Print Labels")) {
       if (!selectedShelfLabelItem) {
-        pushAlert("warning", "Highlight a shelf label row before previewing.");
+        pushAlert("warning", "Highlight a label row before previewing.");
         return;
       }
       setShowShelfLabelPreview(true);
@@ -3643,6 +3822,23 @@ function ErpApp({ currentUser, onLogout }) {
     } catch (error) {
       pushAlert("error", error.message || "Failed to add item to shelf labels.");
     }
+  };
+
+  const handlePrintLabelStickers = () => {
+    if (!selectedShelfLabelItem) {
+      pushAlert("warning", "Highlight a label row before printing.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank", "width=760,height=420");
+    if (!printWindow) {
+      pushAlert("error", "Allow popups to print label stickers.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(buildLabelStickerPrintHtml(selectedShelfLabelItem, true));
+    printWindow.document.close();
   };
 
   const loadPurchaseOrders = async (search = "") => {
@@ -5669,13 +5865,13 @@ function ErpApp({ currentUser, onLogout }) {
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       onKeyDown={(e) => {
-                        if (isShelfLabelToolView && e.key === "Enter") {
+                        if (isItemLabelToolView && e.key === "Enter") {
                           e.preventDefault();
                           void handleAddShelfLabelSearchItem();
                         }
                       }}
                       placeholder={
-                        isShelfLabelToolView
+                        isItemLabelToolView
                           ? "Enter item code or barcode..."
                           : `Search ${selectedWorkspaceTab.label.toLowerCase()}...`
                       }
@@ -5822,10 +6018,10 @@ function ErpApp({ currentUser, onLogout }) {
                     </div>
                   )}
                 </div>
-                {(isItemsView || isStockOverviewView || isReorderView || isShelfLabelToolView) && itemsLoading && (
+                {(isItemsView || isStockOverviewView || isReorderView || isItemLabelToolView) && itemsLoading && (
                   <p className="erp-table-status">Loading items...</p>
                 )}
-                {(isItemsView || isStockOverviewView || isReorderView || isShelfLabelToolView) && itemsError && (
+                {(isItemsView || isStockOverviewView || isReorderView || isItemLabelToolView) && itemsError && (
                   <p className="erp-table-status erp-table-status-error">{itemsError}</p>
                 )}
                 {isSuppliersView && suppliersLoading && <p className="erp-table-status">Loading suppliers...</p>}
@@ -5946,7 +6142,7 @@ function ErpApp({ currentUser, onLogout }) {
                       } ${isStockOverviewView ? "is-stock-overview-table" : ""} ${
                         isReorderView ? "is-reorder-table" : ""
                       } ${
-                        isShelfLabelToolView ? "is-shelf-label-table" : ""
+                        isItemLabelToolView ? "is-shelf-label-table" : ""
                       } ${
                         isCustomerLoyaltyView ? "is-loyalty-customers-table" : ""
                       }`.trim()}
@@ -6156,19 +6352,19 @@ function ErpApp({ currentUser, onLogout }) {
                         ? pagedToolsRows.map((row, rowIndex) => (
                             <tr
                               key={
-                                isShelfLabelToolView
+                                isItemLabelToolView
                                   ? shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId ||
                                     `${activeToolsTab}-${rowIndex}-${row[0] || ""}`
                                   : `${activeToolsTab}-${rowIndex}-${row[0] || ""}`
                               }
                               className={
-                                isShelfLabelToolView &&
+                                isItemLabelToolView &&
                                 shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId === selectedShelfLabelRowId
                                   ? "is-selected-row"
                                   : ""
                               }
                               onClick={() => {
-                                if (isShelfLabelToolView) {
+                                if (isItemLabelToolView) {
                                   setSelectedShelfLabelRowId(
                                     shelfLabelItems[startIndex + rowIndex]?.shelfLabelRowId || ""
                                   );
@@ -7552,7 +7748,7 @@ function ErpApp({ currentUser, onLogout }) {
           <div className="erp-modal-overlay erp-shelf-label-overlay" onClick={() => setShowShelfLabelPreview(false)}>
             <div className="erp-modal-card erp-shelf-label-modal" onClick={(e) => e.stopPropagation()}>
               <div className="erp-modal-header">
-                <h3>Shelf Label Preview</h3>
+                <h3>{isLabelToolView ? "Sticker Label Preview" : "Shelf Label Preview"}</h3>
                 <div className="erp-window-controls">
                   <button
                     type="button"
@@ -7565,42 +7761,71 @@ function ErpApp({ currentUser, onLogout }) {
                 </div>
               </div>
               <div className="erp-shelf-label-preview-stage">
-                <div className="erp-shelf-label-preview">
-                  <div className="erp-shelf-label-main">
-                    <span className="erp-shelf-label-code">
-                      {selectedShelfLabelItem.lookup_code || selectedShelfLabelItem.enteredCode || ""}
-                    </span>
-                    <strong className="erp-shelf-label-description">
-                      {selectedShelfLabelItem.description || "Item description"}
-                    </strong>
-                    <span className="erp-shelf-label-barcode">
-                      Barcode: {selectedShelfLabelItem.alias || selectedShelfLabelItem.enteredCode || ""}
-                    </span>
-                  </div>
-                  <div className="erp-shelf-label-price-block">
-                    <span>PRICE</span>
-                    <strong>
-                      {Number(
-                        selectedShelfLabelItem.sale_price || selectedShelfLabelItem.price || 0
-                      ).toLocaleString()}
-                    </strong>
-                  </div>
-                  <div
-                    className="erp-shelf-label-qr"
-                    aria-label="QR code"
-                    style={{
-                      gridTemplateColumns: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
-                      gridTemplateRows: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
-                    }}
-                  >
-                    {selectedShelfLabelQr.cells.map((isDark, index) => (
-                      <span
-                        key={`shelf-label-qr-${index}`}
-                        className={isDark ? "is-dark" : ""}
-                      />
+                {isLabelToolView ? (
+                  <div className="erp-sticker-label-sheet-preview">
+                    {Array.from({ length: 3 }, (_, stickerIndex) => (
+                      <div className="erp-sticker-label-preview" key={`sticker-label-${stickerIndex}`}>
+                        <strong className="erp-sticker-label-description">
+                          {selectedShelfLabelItem.description || "Item description"}
+                        </strong>
+                        <span className="erp-sticker-label-price">
+                          {Number(
+                            selectedShelfLabelItem.sale_price || selectedShelfLabelItem.price || 0
+                          ).toLocaleString()}
+                        </span>
+                        <div className="erp-sticker-label-barcode" aria-label={selectedLabelStickerBarcode.text}>
+                          {selectedLabelStickerBarcode.bars.map((bar, barIndex) => (
+                            <span
+                              key={`sticker-bar-${stickerIndex}-${barIndex}`}
+                              className={bar.isBar ? "is-bar" : "is-space"}
+                              style={{ flexGrow: bar.width }}
+                            />
+                          ))}
+                        </div>
+                        <span className="erp-sticker-label-code">
+                          {selectedLabelStickerBarcode.text}
+                        </span>
+                      </div>
                     ))}
                   </div>
-                </div>
+                ) : (
+                  <div className="erp-shelf-label-preview">
+                    <div className="erp-shelf-label-main">
+                      <span className="erp-shelf-label-code">
+                        {selectedShelfLabelItem.lookup_code || selectedShelfLabelItem.enteredCode || ""}
+                      </span>
+                      <strong className="erp-shelf-label-description">
+                        {selectedShelfLabelItem.description || "Item description"}
+                      </strong>
+                      <span className="erp-shelf-label-barcode">
+                        Barcode: {selectedShelfLabelItem.alias || selectedShelfLabelItem.enteredCode || ""}
+                      </span>
+                    </div>
+                    <div className="erp-shelf-label-price-block">
+                      <span>PRICE</span>
+                      <strong>
+                        {Number(
+                          selectedShelfLabelItem.sale_price || selectedShelfLabelItem.price || 0
+                        ).toLocaleString()}
+                      </strong>
+                    </div>
+                    <div
+                      className="erp-shelf-label-qr"
+                      aria-label="QR code"
+                      style={{
+                        gridTemplateColumns: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
+                        gridTemplateRows: `repeat(${selectedShelfLabelQr.size}, 1fr)`,
+                      }}
+                    >
+                      {selectedShelfLabelQr.cells.map((isDark, index) => (
+                        <span
+                          key={`shelf-label-qr-${index}`}
+                          className={isDark ? "is-dark" : ""}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="erp-modal-actions">
                 <button
@@ -7610,8 +7835,12 @@ function ErpApp({ currentUser, onLogout }) {
                 >
                   Close
                 </button>
-                <button type="button" className="erp-footer-btn erp-footer-btn-primary">
-                  Print Label
+                <button
+                  type="button"
+                  className="erp-footer-btn erp-footer-btn-primary"
+                  onClick={isLabelToolView ? handlePrintLabelStickers : undefined}
+                >
+                  {isLabelToolView ? "Print Stickers" : "Print Label"}
                 </button>
               </div>
             </div>
