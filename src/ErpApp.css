@@ -3560,6 +3560,106 @@
   color: #5b6c88;
 }
 
+.erp-receive-goods-scroll {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.erp-receive-goods-modal-card {
+  width: min(1080px, calc(100vw - 96px));
+  max-width: 1080px;
+  height: min(90vh, 860px);
+}
+
+.erp-receive-goods-search {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.erp-receive-goods-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.erp-receive-goods-details div {
+  min-width: 0;
+  border: 1px solid rgba(210, 220, 235, 0.78);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: rgba(247, 250, 254, 0.72);
+}
+
+.erp-receive-goods-details span {
+  display: block;
+  margin-bottom: 3px;
+  color: #637795;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.erp-receive-goods-details strong {
+  display: block;
+  min-width: 0;
+  color: #203a63;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-receive-goods-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.erp-receive-goods-table {
+  min-width: 880px;
+}
+
+.erp-receive-goods-entries-section {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.erp-receive-goods-table-wrap {
+  min-height: 300px;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.erp-receive-goods-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f4f8fd;
+  box-shadow: 0 1px 0 rgba(210, 219, 234, 0.92);
+}
+
+.erp-receive-goods-table tbody td {
+  height: 28px;
+}
+
+.erp-receive-goods-total-chip {
+  min-width: 170px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.erp-receive-goods-total-chip.is-match {
+  border-color: rgba(73, 163, 109, 0.42);
+  background: #e8f8ee;
+  color: #17623c;
+}
+
+.erp-receive-goods-total-chip.is-mismatch {
+  border-color: rgba(206, 92, 92, 0.38);
+  background: #fff0f0;
+  color: #8d2d2d;
+}
+
 .erp-po-line-card {
   border: 1px solid rgba(208, 218, 234, 0.84);
   border-radius: 12px;

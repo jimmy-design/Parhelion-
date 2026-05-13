@@ -141,6 +141,8 @@ categories_collection = db["categories"]
 configuration_collection = db["configurations"]
 purchase_order_collection = db["purchaseorder"]
 purchase_order_entries_collection = db["purchaseorderentries"]
+goods_received_collection = db["goodsreceived"]
+goods_received_entry_collection = db["goodsreceivedentry"]
 price_change_collection = db["pricechanges"]
 adjustment_collection = db["adjustments"]
 register_collection = db["register"]
@@ -162,3 +164,29 @@ async def ensure_register_collection_exists(database=None):
         unique=True,
         name="register_primary_key",
     )
+
+
+async def ensure_goods_received_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("goodsreceived", target_db)
+    collection = target_db["goodsreceived"]
+    await collection.create_index([("ID", 1)], unique=True, name="goodsreceived_primary_key")
+    await collection.create_index([("PurchaseOrderID", 1)], name="GoodsRcvd")
+    await collection.create_index([("PayRef", 1)], name="PayRef")
+    await collection.create_index([("PONumber", 1)], name="PONumber")
+    await collection.create_index([("SupplierID", 1)], name="SupplierID")
+    await collection.create_index([("InventoryLocation", 1)], name="InventoryLocation")
+    await collection.create_index([("DateCreated", 1)], name="DateCreated")
+    await collection.create_index([("LastUpdated", 1)], name="LastUpdated")
+
+
+async def ensure_goods_received_entry_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("goodsreceivedentry", target_db)
+    collection = target_db["goodsreceivedentry"]
+    await collection.create_index([("ID", 1)], unique=True, name="goodsreceivedentry_primary_key")
+    await collection.create_index([("GoodsReceivedID", 1)], name="GoodsRcvEntry")
+    await collection.create_index([("StoreID", 1)], name="StoreID")
+    await collection.create_index([("ItemID", 1)], name="ItemID")
+    await collection.create_index([("OrderNumber", 1)], name="OrderNumber")
+    await collection.create_index([("LastUpdated", 1)], name="LastUpdated")

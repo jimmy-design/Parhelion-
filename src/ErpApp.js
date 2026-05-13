@@ -752,6 +752,48 @@ function mapPurchaseOrderToForm(purchaseOrder, fallbackRequisioner = "") {
   };
 }
 
+function createEmptyReceiveGoodsForm() {
+  return {
+    poSearch: "",
+    deliveryNo: "",
+    invoiceNo: "",
+    vehicleNo: "",
+    driverName: "",
+    driverCell: "",
+    comment: "",
+    entries: [],
+  };
+}
+
+function mapPurchaseOrderToReceiveGoodsForm(purchaseOrder) {
+  return {
+    ...createEmptyReceiveGoodsForm(),
+    poSearch: String(purchaseOrder?.po_number || ""),
+    entries: Array.isArray(purchaseOrder?.entries)
+      ? purchaseOrder.entries.map((entry) => {
+          const ordered = Number(entry?.quantity_ordered || 0);
+          const receivedToDate = Number(entry?.quantity_received_to_date || 0);
+          const outstanding = Math.max(ordered - receivedToDate, 0);
+
+          return {
+            rowId: `receive-goods-${entry?.id || entry?.item_id || Math.random().toString(36).slice(2, 8)}`,
+            purchaseOrderEntryId: Number(entry?.id || 0),
+            itemId: Number(entry?.item_id || 0),
+            itemLookupCode: String(entry?.item_lookup_code || ""),
+            itemDescription: String(entry?.item_description || ""),
+            quantityOrdered: ordered,
+            quantityReceivedToDate: receivedToDate,
+            quantityOutstanding: outstanding,
+            quantityReceived: outstanding > 0 ? String(outstanding) : "0",
+            price: Number(entry?.price || 0),
+            taxRate: Number(entry?.tax_rate || 0),
+            orderNumber: String(entry?.order_number || purchaseOrder?.po_number || ""),
+          };
+        })
+      : [],
+  };
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -1613,7 +1655,7 @@ function ErpApp({ currentUser, onLogout }) {
         hint: "Supplier orders, approvals, and inbound stock planning.",
         icon: Handshake,
         tone: "tone-suppliers",
-        actions: ["New PO", "Properties", "Refresh"],
+        actions: ["New PO", "Receive Goods", "Properties", "Refresh"],
       },
       {
         id: "stock-counts",
@@ -1833,6 +1875,12 @@ function ErpApp({ currentUser, onLogout }) {
   const [showAddPurchaseOrderForm, setShowAddPurchaseOrderForm] = useState(false);
   const [purchaseOrderModalMode, setPurchaseOrderModalMode] = useState("create");
   const [savingPurchaseOrder, setSavingPurchaseOrder] = useState(false);
+  const [showReceiveGoodsForm, setShowReceiveGoodsForm] = useState(false);
+  const [receiveGoodsForm, setReceiveGoodsForm] = useState(() => createEmptyReceiveGoodsForm());
+  const [receiveGoodsPurchaseOrder, setReceiveGoodsPurchaseOrder] = useState(null);
+  const [receiveGoodsLoading, setReceiveGoodsLoading] = useState(false);
+  const [receiveGoodsSaving, setReceiveGoodsSaving] = useState(false);
+  const [receiveGoodsError, setReceiveGoodsError] = useState("");
   const [purchaseOrderLookupValue, setPurchaseOrderLookupValue] = useState("");
   const [purchaseOrderLookupQuantity, setPurchaseOrderLookupQuantity] = useState("1");
   const [purchaseOrderLookupPending, setPurchaseOrderLookupPending] = useState(false);
@@ -2430,6 +2478,33 @@ function ErpApp({ currentUser, onLogout }) {
       ) || null,
     [purchaseOrdersRecords, selectedPurchaseOrderId]
   );
+  const receiveGoodsTotals = useMemo(
+    () =>
+      receiveGoodsForm.entries.reduce(
+        (totals, entry) => {
+          const quantityReceived = Number(entry.quantityReceived || 0);
+          const quantityOrdered = Number(entry.quantityOrdered || 0);
+          const lineSubtotal = quantityReceived * Number(entry.price || 0);
+          const orderedSubtotal = quantityOrdered * Number(entry.price || 0);
+          const lineTax = lineSubtotal * (Number(entry.taxRate || 0) / 100);
+          const orderedTax = orderedSubtotal * (Number(entry.taxRate || 0) / 100);
+          return {
+            quantity: totals.quantity + (Number.isFinite(quantityReceived) ? quantityReceived : 0),
+            orderedQuantity: totals.orderedQuantity + (Number.isFinite(quantityOrdered) ? quantityOrdered : 0),
+            tax: totals.tax + (Number.isFinite(lineTax) ? lineTax : 0),
+            orderedTax: totals.orderedTax + (Number.isFinite(orderedTax) ? orderedTax : 0),
+            invoice: totals.invoice + (Number.isFinite(lineSubtotal + lineTax) ? lineSubtotal + lineTax : 0),
+            orderedInvoice: totals.orderedInvoice + (Number.isFinite(orderedSubtotal + orderedTax) ? orderedSubtotal + orderedTax : 0),
+          };
+        },
+        { quantity: 0, orderedQuantity: 0, tax: 0, orderedTax: 0, invoice: 0, orderedInvoice: 0 }
+      ),
+    [receiveGoodsForm.entries]
+  );
+  const receiveGoodsTotalsMatch =
+    receiveGoodsForm.entries.length > 0 &&
+    Math.abs(receiveGoodsTotals.quantity - receiveGoodsTotals.orderedQuantity) < 0.0001 &&
+    Math.abs(receiveGoodsTotals.invoice - receiveGoodsTotals.orderedInvoice) < 0.0001;
   const selectedInventoryItemRecord = useMemo(
     () =>
       itemsRecords.find(
@@ -3649,6 +3724,10 @@ function ErpApp({ currentUser, onLogout }) {
         openCreatePurchaseOrderModal();
         return;
       }
+      if (actionLabel === "Receive Goods") {
+        openReceiveGoodsModal();
+        return;
+      }
       if (actionLabel === "Properties") {
         openPurchaseOrderPropertiesModal();
         return;
@@ -4018,6 +4097,147 @@ function ErpApp({ currentUser, onLogout }) {
     );
     setShowAddPurchaseOrderForm(true);
     loadSuppliers("");
+  };
+
+  const closeReceiveGoodsForm = () => {
+    setReceiveGoodsError("");
+    setReceiveGoodsLoading(false);
+    setReceiveGoodsSaving(false);
+    setReceiveGoodsPurchaseOrder(null);
+    setReceiveGoodsForm(createEmptyReceiveGoodsForm());
+    setShowReceiveGoodsForm(false);
+  };
+
+  const loadReceiveGoodsPurchaseOrder = async (poNumber = receiveGoodsForm.poSearch) => {
+    const searchValue = String(poNumber || "").trim();
+    if (!searchValue) {
+      setReceiveGoodsError("Enter a PO number to receive goods.");
+      pushAlert("warning", "Enter a PO number to receive goods.");
+      return null;
+    }
+
+    setReceiveGoodsLoading(true);
+    setReceiveGoodsError("");
+    try {
+      const purchaseOrder = await fetchJsonWithFallback(
+        `/erp/purchase-orders/by-number/${encodeURIComponent(searchValue)}`,
+        undefined,
+        "Failed to load purchase order"
+      );
+      setReceiveGoodsPurchaseOrder(purchaseOrder);
+      setReceiveGoodsForm(mapPurchaseOrderToReceiveGoodsForm(purchaseOrder));
+      return purchaseOrder;
+    } catch (error) {
+      const message = error.message || "Purchase order was not found.";
+      setReceiveGoodsPurchaseOrder(null);
+      setReceiveGoodsError(message);
+      pushAlert("error", message);
+      return null;
+    } finally {
+      setReceiveGoodsLoading(false);
+    }
+  };
+
+  const openReceiveGoodsModal = (purchaseOrder = selectedPurchaseOrderRecord) => {
+    setReceiveGoodsError("");
+    setReceiveGoodsLoading(false);
+    setReceiveGoodsSaving(false);
+    setShowAddPurchaseOrderForm(false);
+    setShowReceiveGoodsForm(true);
+
+    if (purchaseOrder?.po_number) {
+      setReceiveGoodsPurchaseOrder(purchaseOrder);
+      setReceiveGoodsForm(mapPurchaseOrderToReceiveGoodsForm(purchaseOrder));
+    } else {
+      setReceiveGoodsPurchaseOrder(null);
+      setReceiveGoodsForm(createEmptyReceiveGoodsForm());
+    }
+  };
+
+  const updateReceiveGoodsForm = (field, value) => {
+    setReceiveGoodsForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateReceiveGoodsEntry = (rowId, value) => {
+    setReceiveGoodsForm((prev) => ({
+      ...prev,
+      entries: prev.entries.map((entry) =>
+        entry.rowId === rowId ? { ...entry, quantityReceived: value } : entry
+      ),
+    }));
+  };
+
+  const handleReceiveGoodsSearchSubmit = (event) => {
+    event.preventDefault();
+    void loadReceiveGoodsPurchaseOrder();
+  };
+
+  const handleSaveReceiveGoods = async (event) => {
+    event.preventDefault();
+    if (!receiveGoodsPurchaseOrder) {
+      setReceiveGoodsError("Load a purchase order before saving received goods.");
+      return;
+    }
+
+    const entries = receiveGoodsForm.entries
+      .map((entry) => ({
+        ...entry,
+        quantityReceivedNumber: Number(entry.quantityReceived || 0),
+      }))
+      .filter((entry) => entry.quantityReceivedNumber > 0);
+
+    if (!entries.length) {
+      setReceiveGoodsError("Enter at least one received quantity.");
+      pushAlert("warning", "Enter at least one received quantity.");
+      return;
+    }
+
+    const overReceivedEntry = entries.find(
+      (entry) => entry.quantityReceivedNumber > Number(entry.quantityOutstanding || 0)
+    );
+    if (overReceivedEntry) {
+      setReceiveGoodsError(`${overReceivedEntry.itemDescription} exceeds the outstanding quantity.`);
+      pushAlert("warning", "Received quantity cannot exceed the outstanding PO quantity.");
+      return;
+    }
+
+    setReceiveGoodsSaving(true);
+    setReceiveGoodsError("");
+    try {
+      const saved = await fetchJsonWithFallback(
+        "/erp/goods-received",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            purchase_order_id: Number(receiveGoodsPurchaseOrder.purchase_order_id || 0),
+            po_number: receiveGoodsPurchaseOrder.po_number || receiveGoodsForm.poSearch,
+            delivery_no: receiveGoodsForm.deliveryNo.trim(),
+            invoice_no: receiveGoodsForm.invoiceNo.trim(),
+            entries: entries.map((entry) => ({
+              purchase_order_entry_id: Number(entry.purchaseOrderEntryId || 0),
+              item_id: Number(entry.itemId || 0),
+              item_description: entry.itemDescription,
+              quantity_received: entry.quantityReceivedNumber,
+              order_number: entry.orderNumber || receiveGoodsPurchaseOrder.po_number || "",
+              price: Number(entry.price || 0),
+              tax_rate: Number(entry.taxRate || 0),
+            })),
+          }),
+        },
+        "Failed to save received goods"
+      );
+
+      pushAlert("success", `Goods received ${saved.id} saved for ${saved.po_number}.`);
+      closeReceiveGoodsForm();
+      await loadPurchaseOrders(searchTerm);
+    } catch (error) {
+      const message = error.message || "Failed to save received goods.";
+      setReceiveGoodsError(message);
+      pushAlert("error", message);
+    } finally {
+      setReceiveGoodsSaving(false);
+    }
   };
 
   const updatePurchaseOrderForm = (field, value) => {
@@ -7467,7 +7687,7 @@ function ErpApp({ currentUser, onLogout }) {
         {isPurchaseOrdersView && showAddPurchaseOrderForm && (
           <div className="erp-modal-overlay erp-supplier-modal-overlay" onClick={closePurchaseOrderForm}>
             <div
-              className="erp-modal-card erp-purchase-order-modal-card"
+              className="erp-modal-card erp-purchase-order-modal-card erp-receive-goods-modal-card"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="erp-modal-header">
@@ -7600,7 +7820,7 @@ function ErpApp({ currentUser, onLogout }) {
                     </div>
                   </section>
 
-                  <section className="erp-supplier-section erp-supplier-section-span-2">
+                  <section className="erp-supplier-section erp-supplier-section-span-2 erp-receive-goods-entries-section">
                     <div className="erp-po-entries-toolbar">
                       <div>
                         <h4 className="erp-supplier-section-title">Purchase Order Entries</h4>
@@ -7615,7 +7835,7 @@ function ErpApp({ currentUser, onLogout }) {
                       </div>
                     </div>
 
-                    <div className="erp-po-table-wrap">
+                    <div className="erp-po-table-wrap erp-receive-goods-table-wrap">
                       <table className="erp-po-table">
                         <thead>
                           <tr>
@@ -7739,6 +7959,202 @@ function ErpApp({ currentUser, onLogout }) {
                       {savingPurchaseOrder ? "Saving..." : "Proceed"}
                     </button>
                   )}
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {isPurchaseOrdersView && showReceiveGoodsForm && (
+          <div className="erp-modal-overlay erp-supplier-modal-overlay" onClick={closeReceiveGoodsForm}>
+            <div
+              className="erp-modal-card erp-purchase-order-modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="erp-modal-header">
+                <h3>Receive Goods</h3>
+                <div className="erp-window-controls">
+                  <button
+                    type="button"
+                    className="erp-window-btn erp-window-btn-close"
+                    onClick={closeReceiveGoodsForm}
+                    aria-label="Close"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+
+              <form className="erp-supplier-form-modal erp-purchase-order-form" onSubmit={handleSaveReceiveGoods} noValidate>
+                <div className="erp-purchase-order-scroll erp-receive-goods-scroll">
+                  <section className="erp-supplier-section erp-supplier-section-span-2">
+                    <div className="erp-po-quick-add-grid erp-receive-goods-search">
+                      <div className="erp-form-field erp-po-quick-add-field">
+                        <label>PO Number</label>
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          placeholder="Enter PO number"
+                          value={receiveGoodsForm.poSearch}
+                          onChange={(e) => updateReceiveGoodsForm("poSearch", e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleReceiveGoodsSearchSubmit(e);
+                            }
+                          }}
+                        />
+                      </div>
+                      <div className="erp-po-quick-add-action">
+                        <button
+                          type="button"
+                          className="erp-mini-btn erp-po-add-btn"
+                          onClick={() => {
+                            void loadReceiveGoodsPurchaseOrder();
+                          }}
+                          disabled={receiveGoodsLoading}
+                        >
+                          {receiveGoodsLoading ? "Searching..." : "Load PO"}
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="erp-supplier-section">
+                    <h4 className="erp-supplier-section-title">PO Details</h4>
+                    {receiveGoodsPurchaseOrder ? (
+                      <div className="erp-receive-goods-details">
+                        <div>
+                          <span>PO Number</span>
+                          <strong>{receiveGoodsPurchaseOrder.po_number}</strong>
+                        </div>
+                        <div>
+                          <span>Supplier</span>
+                          <strong>{receiveGoodsPurchaseOrder.supplier_name || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Title</span>
+                          <strong>{receiveGoodsPurchaseOrder.po_title || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Status</span>
+                          <strong>{receiveGoodsPurchaseOrder.status_label || "-"}</strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="erp-po-table-empty">Search for a PO number to load supplier order details.</div>
+                    )}
+                  </section>
+
+                  <section className="erp-supplier-section">
+                    <h4 className="erp-supplier-section-title">Receiving Info</h4>
+                    <div className="erp-supplier-section-grid erp-receive-goods-info-grid">
+                      <div className="erp-form-field">
+                        <label>Delivery No</label>
+                        <input
+                          type="text"
+                          value={receiveGoodsForm.deliveryNo}
+                          onChange={(e) => updateReceiveGoodsForm("deliveryNo", e.target.value)}
+                        />
+                      </div>
+                      <div className="erp-form-field">
+                        <label>Invoice No</label>
+                        <input
+                          type="text"
+                          value={receiveGoodsForm.invoiceNo}
+                          onChange={(e) => updateReceiveGoodsForm("invoiceNo", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="erp-supplier-section erp-supplier-section-span-2">
+                    <div className="erp-po-entries-toolbar">
+                      <div>
+                        <h4 className="erp-supplier-section-title">Goods Received Entries</h4>
+                      </div>
+                      <div className="erp-po-toolbar-actions">
+                        <span
+                          className={`erp-po-summary-chip erp-receive-goods-total-chip ${
+                            receiveGoodsTotalsMatch ? "is-match" : "is-mismatch"
+                          }`}
+                        >
+                          Total Tax: {receiveGoodsTotals.tax.toLocaleString()}
+                        </span>
+                        <span
+                          className={`erp-po-summary-chip erp-receive-goods-total-chip ${
+                            receiveGoodsTotalsMatch ? "is-match" : "is-mismatch"
+                          }`}
+                        >
+                          Total Invoice: {receiveGoodsTotals.invoice.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="erp-po-table-wrap">
+                      <table className="erp-po-table erp-receive-goods-table">
+                        <thead>
+                          <tr>
+                            <th>Item Code</th>
+                            <th>Description</th>
+                            <th>Ordered</th>
+                            <th>Received</th>
+                            <th>Outstanding</th>
+                            <th>Receive Now</th>
+                            <th>Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {receiveGoodsForm.entries.length ? (
+                            receiveGoodsForm.entries.map((entry) => (
+                              <tr key={entry.rowId}>
+                                <td className="erp-po-code-cell">{entry.itemLookupCode || entry.itemId || "-"}</td>
+                                <td className="erp-po-description-cell">{entry.itemDescription || "-"}</td>
+                                <td className="erp-po-money-cell">{Number(entry.quantityOrdered || 0).toLocaleString()}</td>
+                                <td className="erp-po-money-cell">{Number(entry.quantityReceivedToDate || 0).toLocaleString()}</td>
+                                <td className="erp-po-line-total-cell">{Number(entry.quantityOutstanding || 0).toLocaleString()}</td>
+                                <td>
+                                  <input
+                                    className="erp-po-qty-input"
+                                    type="number"
+                                    min="0"
+                                    max={entry.quantityOutstanding}
+                                    step="0.01"
+                                    value={entry.quantityReceived}
+                                    onChange={(e) => updateReceiveGoodsEntry(entry.rowId, e.target.value)}
+                                  />
+                                </td>
+                                <td className="erp-po-money-cell">{Number(entry.price || 0).toLocaleString()}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td className="erp-po-table-empty" colSpan="7">
+                                Load a purchase order to populate ordered items.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {receiveGoodsError && <div className="erp-po-inline-error">{receiveGoodsError}</div>}
+                  </section>
+                </div>
+
+                <div className="erp-modal-actions">
+                  <button
+                    type="button"
+                    className="erp-footer-btn erp-footer-btn-secondary"
+                    onClick={closeReceiveGoodsForm}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="erp-footer-btn erp-footer-btn-primary"
+                    disabled={receiveGoodsSaving || !receiveGoodsPurchaseOrder}
+                  >
+                    {receiveGoodsSaving ? "Saving..." : "Receive Goods"}
+                  </button>
                 </div>
               </form>
             </div>

@@ -29,11 +29,15 @@ from database.mongodb import (
     configuration_collection,
     purchase_order_collection,
     purchase_order_entries_collection,
+    goods_received_collection,
+    goods_received_entry_collection,
     price_change_collection,
     adjustment_collection,
     branch_collection,
     BRANCH_COLLECTION_CANDIDATES,
     ensure_collection_exists,
+    ensure_goods_received_collection_exists,
+    ensure_goods_received_entry_collection_exists,
     ensure_register_collection_exists,
     get_store_collection,
     get_store_database_name,
@@ -58,6 +62,8 @@ app = FastAPI(title="POS Backend API", version="1.0.2")
 @app.on_event("startup")
 async def ensure_required_mongo_collections():
     await ensure_collection_exists("adjustments")
+    await ensure_goods_received_collection_exists()
+    await ensure_goods_received_entry_collection_exists()
     await ensure_register_collection_exists()
 
 
@@ -454,6 +460,44 @@ class ERPPurchaseOrderOut(BaseModel):
     total_amount: float
     last_updated: datetime
     entries: List[ERPPurchaseOrderEntryOut] = []
+
+
+class ERPGoodsReceivedEntryCreate(BaseModel):
+    purchase_order_entry_id: Optional[int] = None
+    item_id: int
+    item_description: str = ""
+    quantity_received: float
+    quantity_on_hand: float = 0
+    order_number: str = ""
+    price: float = 0
+    tax_rate: float = 0
+    reason: str = "N/A"
+    inventory_offline_id: int = 0
+
+
+class ERPGoodsReceivedCreate(BaseModel):
+    purchase_order_id: int
+    po_number: str
+    delivery_no: str = ""
+    invoice_no: str = ""
+    vehicle_no: str = ""
+    driver_name: str = ""
+    driver_cell: str = ""
+    comment: str = ""
+    approved: bool = False
+    picked: bool = False
+    entries: List[ERPGoodsReceivedEntryCreate]
+
+
+class ERPGoodsReceivedOut(BaseModel):
+    id: int
+    purchase_order_id: int
+    po_number: str
+    delivery_no: str
+    invoice_no: str
+    entries_count: int
+    total_quantity_received: float
+    last_updated: datetime
 
 
 class ERPPriceBand(BaseModel):
@@ -2716,6 +2760,29 @@ async def list_erp_purchase_orders(
     ]
 
 
+@app.get("/erp/purchase-orders/by-number/{po_number}", response_model=ERPPurchaseOrderOut)
+async def get_erp_purchase_order_by_number(po_number: str):
+    search_value = str(po_number or "").strip()
+    if not search_value:
+        raise HTTPException(status_code=400, detail="PO number is required")
+
+    purchase_order = await purchase_order_collection.find_one(
+        {"PONumber": {"$regex": f"^{re.escape(search_value)}$", "$options": "i"}}
+    )
+    if not purchase_order:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    purchase_order_id = int(purchase_order.get("WorkSheetID", purchase_order.get("ID", 0)) or 0)
+    entries_lookup = await build_purchase_order_entries_lookup([purchase_order_id])
+    supplier_lookup = await build_supplier_name_lookup([int(purchase_order.get("SupplierID", 0) or 0)])
+
+    return map_purchase_order_for_erp(
+        purchase_order,
+        entries_lookup.get(purchase_order_id, []),
+        supplier_lookup.get(int(purchase_order.get("SupplierID", 0) or 0), ""),
+    )
+
+
 @app.post("/erp/purchase-orders", response_model=ERPPurchaseOrderOut, status_code=201)
 async def create_erp_purchase_order(payload: ERPPurchaseOrderCreate):
     po_title = payload.po_title.strip()
@@ -2905,6 +2972,222 @@ async def create_erp_purchase_order(payload: ERPPurchaseOrderCreate):
 
     supplier_name = str(supplier.get("SupplierName", supplier.get("Company", "")) or "")
     return map_purchase_order_for_erp(purchase_order_doc, entry_docs, supplier_name)
+
+
+@app.post("/erp/goods-received", response_model=ERPGoodsReceivedOut, status_code=201)
+async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
+    purchase_order_id = int(payload.purchase_order_id or 0)
+    po_number = str(payload.po_number or "").strip()
+    if purchase_order_id <= 0 and not po_number:
+        raise HTTPException(status_code=400, detail="Purchase order is required")
+
+    purchase_order_query = (
+        {"WorkSheetID": purchase_order_id}
+        if purchase_order_id > 0
+        else {"PONumber": {"$regex": f"^{re.escape(po_number)}$", "$options": "i"}}
+    )
+    purchase_order = await purchase_order_collection.find_one(purchase_order_query)
+    if not purchase_order:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    resolved_purchase_order_id = int(
+        purchase_order.get("WorkSheetID", purchase_order.get("ID", 0)) or 0
+    )
+    resolved_po_number = str(purchase_order.get("PONumber", po_number) or po_number)
+    receivable_entries = [
+        entry
+        for entry in payload.entries
+        if float(entry.quantity_received or 0) > 0
+    ]
+    if not receivable_entries:
+        raise HTTPException(status_code=400, detail="Enter at least one received quantity")
+
+    order_entries = await purchase_order_entries_collection.find(
+        {"PurchaseOrderID": resolved_purchase_order_id}
+    ).to_list(10000)
+    order_entry_lookup = {
+        int(entry.get("ID", 0) or 0): entry
+        for entry in order_entries
+        if int(entry.get("ID", 0) or 0) > 0
+    }
+    order_item_lookup = {
+        int(entry.get("ItemID", 0) or 0): entry
+        for entry in order_entries
+        if int(entry.get("ItemID", 0) or 0) > 0
+    }
+
+    last_goods_received = await goods_received_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)],
+    )
+    next_goods_received_id = (
+        int(last_goods_received.get("ID", 0)) + 1
+        if last_goods_received
+        else 1
+    )
+
+    last_entry = await goods_received_entry_collection.find_one(
+        {"ID": {"$type": "number"}},
+        sort=[("ID", -1)],
+    )
+    next_entry_id = int(last_entry.get("ID", 0)) + 1 if last_entry else 1
+
+    now = datetime.utcnow()
+    store_id = int(purchase_order.get("StoreID", 1) or 1)
+    entry_docs = []
+
+    for entry in receivable_entries:
+        order_entry = None
+        if entry.purchase_order_entry_id:
+            order_entry = order_entry_lookup.get(int(entry.purchase_order_entry_id))
+        if not order_entry:
+            order_entry = order_item_lookup.get(int(entry.item_id or 0))
+        if not order_entry:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Item {entry.item_id} is not on purchase order {resolved_po_number}",
+            )
+
+        quantity_received = float(entry.quantity_received or 0)
+        quantity_ordered = float(order_entry.get("QuantityOrdered", 0) or 0)
+        quantity_received_to_date = float(order_entry.get("QuantityReceivedToDate", 0) or 0)
+        if quantity_received_to_date + quantity_received > quantity_ordered:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Received quantity for {order_entry.get('ItemDescription', 'item')} exceeds ordered quantity",
+            )
+
+        item_id = int(order_entry.get("ItemID", entry.item_id or 0) or 0)
+        item_doc = await item_collection.find_one({"ItemID": item_id})
+        quantity_on_hand = float(
+            get_item_stock_quantity(item_doc)
+            if item_doc
+            else entry.quantity_on_hand or 0
+        )
+
+        entry_docs.append(
+            {
+                "ID": next_entry_id,
+                "ItemDescription": str(
+                    order_entry.get("ItemDescription", entry.item_description or "") or ""
+                ),
+                "LastUpdated": now,
+                "StoreID": store_id,
+                "QuantityOnHand": quantity_on_hand,
+                "GoodsReceivedID": next_goods_received_id,
+                "QuantityRecieved": quantity_received,
+                "ItemID": item_id,
+                "Reason": str(entry.reason or "N/A")[:35],
+                "OrderNumber": resolved_po_number,
+                "Price": float(order_entry.get("Price", entry.price or 0) or 0),
+                "TaxRate": float(order_entry.get("TaxRate", entry.tax_rate or 0) or 0),
+                "InvetoryOfflineID": int(entry.inventory_offline_id or 0),
+            }
+        )
+        next_entry_id += 1
+
+        await purchase_order_entries_collection.update_one(
+            {"_id": order_entry["_id"]},
+            {
+                "$set": {
+                    "QuantityReceived": quantity_received,
+                    "QuantityReceivedToDate": quantity_received_to_date + quantity_received,
+                    "LastUpdated": now,
+                }
+            },
+        )
+        if item_doc:
+            stock_quantity_field = "quantity" if "quantity" in item_doc else "Quantity"
+            await item_collection.update_one(
+                {"_id": item_doc["_id"]},
+                {
+                    "$inc": {stock_quantity_field: quantity_received},
+                    "$set": {"LastUpdated": now},
+                },
+            )
+
+    total_quantity_received = sum(float(entry["QuantityRecieved"] or 0) for entry in entry_docs)
+    goods_received_doc = {
+        "ID": next_goods_received_id,
+        "PayRef": int(purchase_order.get("PayRef", 0) or 0),
+        "PurchaseOrderID": resolved_purchase_order_id,
+        "LastUpdated": now,
+        "POTitle": str(purchase_order.get("POTitle", "") or "")[:50],
+        "POType": int(purchase_order.get("POType", 0) or 0),
+        "StoreID": store_id,
+        "WorkSheetID": int(purchase_order.get("WorkSheetID", resolved_purchase_order_id) or 0),
+        "PONumber": resolved_po_number,
+        "PStatus": int(purchase_order.get("PStatus", 0) or 0),
+        "DateCreated": now,
+        "PTo": str(purchase_order.get("PTo", "") or ""),
+        "ShipTo": str(purchase_order.get("ShipTo", "") or ""),
+        "Requisioner": str(purchase_order.get("Requisioner", "") or ""),
+        "ShipVia": str(purchase_order.get("ShipVia", "") or ""),
+        "FOBPoint": str(purchase_order.get("FOBPoint", "") or ""),
+        "Terms": str(purchase_order.get("Terms", "") or ""),
+        "TaxRate": float(purchase_order.get("TaxRate", 0) or 0),
+        "Shipping": float(purchase_order.get("Shipping", 0) or 0),
+        "Freight": str(purchase_order.get("Freight", "") or ""),
+        "Millage": 0,
+        "DashMillage": 0,
+        "TrackerQty": 0,
+        "PreMillage": 0,
+        "ActualQty": total_quantity_received,
+        "DashFuel": 0,
+        "RouteDesc": "",
+        "RequiredDate": parse_optional_erp_datetime(purchase_order.get("RequiredDate")),
+        "ConfirmingTo": str(purchase_order.get("ConfirmingTo", "") or ""),
+        "Remarks": str(purchase_order.get("Remarks", "") or ""),
+        "SupplierID": int(purchase_order.get("SupplierID", 0) or 0),
+        "OtherStoreID": int(purchase_order.get("OtherStoreID", 0) or 0),
+        "CurrencyID": int(purchase_order.get("CurrencyID", 0) or 0),
+        "ExchangeRate": float(purchase_order.get("ExchangeRate", 0) or 0),
+        "OtherPOID": int(purchase_order.get("OtherPOID", 0) or 0),
+        "InventoryLocation": int(purchase_order.get("InventoryLocation", 0) or 0),
+        "IsPlaced": bool(purchase_order.get("IsPlaced", False)),
+        "DatePlaced": parse_optional_erp_datetime(purchase_order.get("DatePlaced")),
+        "BatchNumber": int(purchase_order.get("BatchNumber", 0) or 0),
+        "DeliveryNo": str(payload.delivery_no or "").strip(),
+        "InvoiceNo": str(payload.invoice_no or "").strip(),
+        "VehicleNo": str(payload.vehicle_no or "").strip(),
+        "DriverName": str(payload.driver_name or "").strip(),
+        "gComment": str(payload.comment or "").strip(),
+        "DriverCell": str(payload.driver_cell or "").strip(),
+        "Picked": bool(payload.picked),
+        "Approved": bool(payload.approved),
+    }
+
+    await goods_received_collection.insert_one(goods_received_doc)
+    if entry_docs:
+        await goods_received_entry_collection.insert_many(entry_docs)
+
+    refreshed_entries = await purchase_order_entries_collection.find(
+        {"PurchaseOrderID": resolved_purchase_order_id}
+    ).to_list(10000)
+    all_received = all(
+        float(entry.get("QuantityReceivedToDate", 0) or 0) >= float(entry.get("QuantityOrdered", 0) or 0)
+        for entry in refreshed_entries
+    )
+    await purchase_order_collection.update_one(
+        {"_id": purchase_order["_id"]},
+        {
+            "$set": {
+                "PStatus": 3 if all_received else 2,
+                "LastUpdated": now,
+            }
+        },
+    )
+
+    return ERPGoodsReceivedOut(
+        id=next_goods_received_id,
+        purchase_order_id=resolved_purchase_order_id,
+        po_number=resolved_po_number,
+        delivery_no=str(payload.delivery_no or "").strip(),
+        invoice_no=str(payload.invoice_no or "").strip(),
+        entries_count=len(entry_docs),
+        total_quantity_received=total_quantity_received,
+        last_updated=now,
+    )
 
 
 @app.get("/erp/price-changes", response_model=List[ERPPriceChangeOut])
