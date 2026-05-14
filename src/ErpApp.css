@@ -5864,7 +5864,8 @@
 .erp-shell .erp-window-btn-close {
   background: var(--app-button-bg) !important;
   color: var(--app-button-text) !important;
-  border-color: rgba(255, 255, 255, 0.3);
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 .erp-shell .erp-action-btn:hover:not(:disabled),
@@ -5896,4 +5897,8 @@
 .erp-shell .erp-window-btn:active:not(:disabled),
 .erp-shell .erp-window-btn-close:active:not(:disabled) {
   background: var(--app-button-bg-active) !important;
+}
+
+.erp-shell button {
+  border: 0 !important;
 }

@@ -3032,9 +3032,20 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
     )
     next_entry_id = int(last_entry.get("ID", 0)) + 1 if last_entry else 1
 
+    last_adjustment = await adjustment_collection.find_one(
+        {"AdjustmentID": {"$type": "number"}},
+        sort=[("AdjustmentID", -1)],
+    )
+    next_adjustment_id = (
+        int(last_adjustment.get("AdjustmentID", 0) or 0) + 1
+        if last_adjustment
+        else 1
+    )
+
     now = datetime.utcnow()
     store_id = int(purchase_order.get("StoreID", 1) or 1)
     entry_docs = []
+    adjustment_docs = []
 
     for entry in receivable_entries:
         order_entry = None
@@ -3059,6 +3070,16 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
 
         item_id = int(order_entry.get("ItemID", entry.item_id or 0) or 0)
         item_doc = await item_collection.find_one({"ItemID": item_id})
+        item_description = str(
+            order_entry.get("ItemDescription", entry.item_description or "") or ""
+        )
+        item_lookup_code = str(
+            order_entry.get(
+                "ItemLookupCode",
+                (item_doc or {}).get("ItemLookupCode", ""),
+            )
+            or ""
+        ).strip()
         quantity_on_hand = float(
             get_item_stock_quantity(item_doc)
             if item_doc
@@ -3068,9 +3089,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
         entry_docs.append(
             {
                 "ID": next_entry_id,
-                "ItemDescription": str(
-                    order_entry.get("ItemDescription", entry.item_description or "") or ""
-                ),
+                "ItemDescription": item_description,
                 "LastUpdated": now,
                 "StoreID": store_id,
                 "QuantityOnHand": quantity_on_hand,
@@ -3085,6 +3104,39 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
             }
         )
         next_entry_id += 1
+
+        adjustment_docs.append(
+            {
+                "AdjustmentID": next_adjustment_id,
+                "Reference": build_adjustment_reference(next_adjustment_id),
+                "Item": item_description,
+                "SKU": item_lookup_code,
+                "Quantity": quantity_received,
+                "Reason": "purchase adjust automatically",
+                "RequestedBy": "System",
+                "Status": "Posted",
+                "Location": f"Store {store_id}",
+                "RequestedAt": now,
+                "ApprovedBy": "System",
+                "ApprovedAt": now,
+                "Note": (
+                    f"Auto stock increase from goods received {next_goods_received_id} "
+                    f"for PO {resolved_po_number}; invoice {str(payload.invoice_no or '').strip() or 'N/A'}."
+                ),
+                "Impact": (
+                    f"Automatically posted {quantity_received:+g} units to item "
+                    f"{item_lookup_code or item_id} from purchase receiving."
+                ),
+                "StoreID": store_id,
+                "EffectiveDate": now,
+                "LastUpdated": now,
+                "GoodsReceivedID": next_goods_received_id,
+                "PurchaseOrderID": resolved_purchase_order_id,
+                "PONumber": resolved_po_number,
+                "InvoiceNo": str(payload.invoice_no or "").strip(),
+            }
+        )
+        next_adjustment_id += 1
 
         await purchase_order_entries_collection.update_one(
             {"_id": order_entry["_id"]},
@@ -3160,6 +3212,8 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
     await goods_received_collection.insert_one(goods_received_doc)
     if entry_docs:
         await goods_received_entry_collection.insert_many(entry_docs)
+    if adjustment_docs:
+        await adjustment_collection.insert_many(adjustment_docs)
 
     refreshed_entries = await purchase_order_entries_collection.find(
         {"PurchaseOrderID": resolved_purchase_order_id}

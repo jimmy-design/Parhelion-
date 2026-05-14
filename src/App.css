@@ -2277,7 +2277,8 @@ textarea {
 .app .user-info-logout {
   background: var(--app-button-bg) !important;
   color: var(--app-button-text) !important;
-  border-color: rgba(255, 255, 255, 0.3);
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 .app .checkout-btn:hover:not(:disabled),
@@ -2295,4 +2296,8 @@ textarea {
 .app .auth-secondary-btn:active:not(:disabled),
 .app .user-info-logout:active:not(:disabled) {
   background: var(--app-button-bg-active) !important;
+}
+
+.app button {
+  border: 0 !important;
 }
