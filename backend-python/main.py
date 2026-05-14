@@ -1264,6 +1264,18 @@ def get_item_stock_quantity(doc: dict) -> int:
     return int(doc.get("quantity", doc.get("Quantity", doc.get("StockAvailable", 0))) or 0)
 
 
+def build_item_stock_increment(doc: dict, quantity: float) -> dict:
+    stock_fields = [
+        field_name
+        for field_name in ("quantity", "Quantity", "StockAvailable")
+        if field_name in (doc or {})
+    ]
+    if not stock_fields:
+        stock_fields = ["quantity"]
+
+    return {field_name: quantity for field_name in stock_fields}
+
+
 async def find_erp_item_by_lookup_or_id(lookup_code: str, store_id: Optional[int] = None):
     normalized = str(lookup_code or "").strip()
     if not normalized:
@@ -3044,6 +3056,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
 
     now = datetime.utcnow()
     store_id = int(purchase_order.get("StoreID", 1) or 1)
+    target_item_collection = get_price_change_item_collection(store_id)
     entry_docs = []
     adjustment_docs = []
 
@@ -3069,15 +3082,30 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
             )
 
         item_id = int(order_entry.get("ItemID", entry.item_id or 0) or 0)
-        item_doc = await item_collection.find_one({"ItemID": item_id})
+        order_item_lookup_code = str(order_entry.get("ItemLookupCode", "") or "").strip()
+        item_doc = None
+        item_update_collection = target_item_collection
+        if item_id > 0:
+            item_doc = await target_item_collection.find_one({"ItemID": item_id})
+        if not item_doc and order_item_lookup_code:
+            item_doc = await target_item_collection.find_one(
+                {"ItemLookupCode": order_item_lookup_code}
+            )
+        if not item_doc and item_id > 0:
+            item_doc = await item_collection.find_one({"ItemID": item_id})
+            if item_doc:
+                item_update_collection = item_collection
+        if not item_doc and order_item_lookup_code:
+            item_doc = await item_collection.find_one({"ItemLookupCode": order_item_lookup_code})
+            if item_doc:
+                item_update_collection = item_collection
+
         item_description = str(
             order_entry.get("ItemDescription", entry.item_description or "") or ""
         )
         item_lookup_code = str(
-            order_entry.get(
-                "ItemLookupCode",
-                (item_doc or {}).get("ItemLookupCode", ""),
-            )
+            order_item_lookup_code
+            or (item_doc or {}).get("ItemLookupCode", "")
             or ""
         ).strip()
         quantity_on_hand = float(
@@ -3112,7 +3140,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
                 "Item": item_description,
                 "SKU": item_lookup_code,
                 "Quantity": quantity_received,
-                "Reason": "purchase adjust automatically",
+                "Reason": "purchase",
                 "RequestedBy": "System",
                 "Status": "Posted",
                 "Location": f"Store {store_id}",
@@ -3149,11 +3177,10 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
             },
         )
         if item_doc:
-            stock_quantity_field = "quantity" if "quantity" in item_doc else "Quantity"
-            await item_collection.update_one(
+            await item_update_collection.update_one(
                 {"_id": item_doc["_id"]},
                 {
-                    "$inc": {stock_quantity_field: quantity_received},
+                    "$inc": build_item_stock_increment(item_doc, quantity_received),
                     "$set": {"LastUpdated": now},
                 },
             )
