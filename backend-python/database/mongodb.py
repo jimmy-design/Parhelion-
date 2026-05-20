@@ -137,6 +137,9 @@ loyalty_customers_collection = db["loyaltycustomers"]
 loyalty_transactions_collection = db["loyalty_transactions"]
 cashier_collection = db["cashier"]
 supplier_collection = db["supplier"]
+account_collection = db["accounts"]
+combined_account_collection = db["combinedaccounts"]
+account_mapping_collection = db["account_mappings"]
 categories_collection = db["categories"]
 configuration_collection = db["configurations"]
 purchase_order_collection = db["purchaseorder"]
@@ -164,6 +167,29 @@ async def ensure_register_collection_exists(database=None):
         unique=True,
         name="register_primary_key",
     )
+
+
+async def ensure_combined_accounts_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("combinedaccounts", target_db)
+    collection = target_db["combinedaccounts"]
+    await collection.create_index([("ID", 1)], unique=True, sparse=True, name="combinedaccounts_primary_key")
+    await collection.create_index([("Number", 1)], name="Number")
+    await collection.create_index([("PayoutMapID", 1)], name="PayoutMapID")
+    await collection.create_index([("SubAccountof", 1)], name="SubAccountof")
+    await collection.create_index([("CommissionGL", 1)], name="CommissionGL")
+    await collection.create_index([("isBalanceSheet", 1)], name="isBalanceSheet")
+    await collection.create_index([("OtherGLTenders", 1)], name="OtherGLTenders")
+    await collection.create_index([("AccountType", 1)], name="AccountType")
+
+
+async def ensure_account_mapping_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("account_mappings", target_db)
+    collection = target_db["account_mappings"]
+    await collection.create_index([("MappingKey", 1)], unique=True, name="account_mapping_key")
+    await collection.create_index([("AccountID", 1)], name="AccountID")
+    await collection.create_index([("AccountCode", 1)], name="AccountCode")
 
 
 async def ensure_goods_received_collection_exists(database=None):

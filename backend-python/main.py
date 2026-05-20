@@ -25,6 +25,9 @@ from database.mongodb import (
     loyalty_transactions_collection,
     cashier_collection,
     supplier_collection,
+    account_collection,
+    combined_account_collection,
+    account_mapping_collection,
     categories_collection,
     configuration_collection,
     purchase_order_collection,
@@ -35,6 +38,8 @@ from database.mongodb import (
     adjustment_collection,
     branch_collection,
     BRANCH_COLLECTION_CANDIDATES,
+    ensure_account_mapping_collection_exists,
+    ensure_combined_accounts_collection_exists,
     ensure_collection_exists,
     ensure_goods_received_collection_exists,
     ensure_goods_received_entry_collection_exists,
@@ -62,6 +67,8 @@ app = FastAPI(title="POS Backend API", version="1.0.2")
 @app.on_event("startup")
 async def ensure_required_mongo_collections():
     await ensure_collection_exists("adjustments")
+    await ensure_combined_accounts_collection_exists()
+    await ensure_account_mapping_collection_exists()
     await ensure_goods_received_collection_exists()
     await ensure_goods_received_entry_collection_exists()
     await ensure_register_collection_exists()
@@ -363,6 +370,57 @@ class ERPSupplierOut(BaseModel):
     last_updated: datetime
     start_date: Optional[datetime]
     end_date: Optional[datetime]
+
+
+class ERPAccountOut(BaseModel):
+    id: str
+    account_code: str
+    account_name: str
+    account_type: str
+    parent: str
+    parent_id: str = ""
+    level: int = 0
+    has_children: bool = False
+    status: str
+    last_updated: Optional[datetime] = None
+
+
+class ERPAccountTypeOut(BaseModel):
+    id: str
+    code: str
+    name: str
+
+
+class ERPAccountCreate(BaseModel):
+    number: str
+    account_name: str
+    account_type: int = 0
+    currency: int = 0
+    sub_account_of: int = 0
+    description: Optional[str] = ""
+    note: Optional[str] = ""
+    inactive: bool = False
+    is_balance_sheet: bool = False
+
+
+class ERPAccountMappingOut(BaseModel):
+    mapping_key: str
+    label: str
+    account_id: str = ""
+    account_code: str = ""
+    account_name: str = ""
+    account_type: str = ""
+    updated_at: Optional[datetime] = None
+
+
+class ERPAccountMappingUpsert(BaseModel):
+    mapping_key: str
+    account_id: Optional[str] = ""
+    account_code: Optional[str] = ""
+
+
+class ERPAccountMappingsUpdate(BaseModel):
+    mappings: List[ERPAccountMappingUpsert]
 
 
 class ERPPurchaseOrderEntryCreate(BaseModel):
@@ -1470,6 +1528,272 @@ def parse_optional_erp_datetime(value) -> Optional[datetime]:
     return None
 
 
+def get_first_present_value(doc: dict, keys: List[str], default=""):
+    for key in keys:
+        value = doc.get(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return default
+
+
+def normalize_account_status(doc: dict) -> str:
+    status_value = get_first_present_value(doc, ["Status", "status"], "")
+    if status_value:
+        normalized = str(status_value).strip().lower()
+        if normalized in {"inactive", "disabled", "archived", "closed", "0", "false"}:
+            return "Inactive"
+        return "Active"
+
+    active_value = get_first_present_value(doc, ["IsActive", "Active", "Enabled", "enabled"], None)
+    if active_value is None:
+        inactive_value = get_first_present_value(doc, ["Inactive", "Disabled"], None)
+        if inactive_value is None:
+            return "Active"
+        if isinstance(inactive_value, str):
+            return "Inactive" if inactive_value.strip().lower() in {"1", "true", "yes", "inactive", "disabled"} else "Active"
+        return "Inactive" if bool(inactive_value) else "Active"
+
+    if isinstance(active_value, str):
+        return "Inactive" if active_value.strip().lower() in {"0", "false", "no", "inactive"} else "Active"
+    return "Active" if bool(active_value) else "Inactive"
+
+
+def map_account_for_erp(doc: dict) -> ERPAccountOut:
+    raw_id = get_first_present_value(doc, ["ID", "AccountID", "AccountId", "id"], doc.get("_id", ""))
+    raw_parent = get_first_present_value(
+        doc,
+        [
+            "SubAccountof",
+            "Parent",
+            "ParentAccount",
+            "ParentAccountCode",
+            "ParentCode",
+            "ParentID",
+            "ParentId",
+        ],
+        "",
+    )
+    return ERPAccountOut(
+        id=str(raw_id or ""),
+        account_code=str(
+            get_first_present_value(
+                doc,
+                ["Number", "AccountCode", "Code", "CodeNum", "AccountNumber", "No", "account_code"],
+                raw_id,
+            )
+            or ""
+        ),
+        account_name=str(
+            get_first_present_value(
+                doc,
+                ["AccountName", "Name", "Description", "Title", "account_name"],
+                "",
+            )
+            or ""
+        ),
+        account_type=str(
+            get_first_present_value(
+                doc,
+                ["AccountType", "Type", "Category", "Group", "account_type"],
+                "",
+            )
+            or ""
+        ),
+        parent=str(
+            raw_parent or ""
+        ),
+        parent_id=str(raw_parent or ""),
+        status=normalize_account_status(doc),
+        last_updated=parse_optional_erp_datetime(
+            get_first_present_value(doc, ["LastUpdated", "UpdatedAt", "updated_at"], None)
+        ),
+    )
+
+
+def map_account_type_for_erp(doc: dict) -> ERPAccountTypeOut:
+    raw_id = doc.get("_id", doc.get("ID", ""))
+    return ERPAccountTypeOut(
+        id=str(raw_id or ""),
+        code=str(doc.get("CodeNum", doc.get("Code", doc.get("Number", ""))) or ""),
+        name=str(doc.get("Name", doc.get("AccountType", "")) or ""),
+    )
+
+
+async def get_account_type_name_by_code() -> dict:
+    type_docs = await account_collection.find({}).to_list(length=500)
+    type_name_by_code = {}
+    for doc in type_docs:
+        account_type = map_account_type_for_erp(doc)
+        raw_code = str(account_type.code or "").strip()
+        if not raw_code:
+            continue
+        type_name_by_code[raw_code] = account_type.name
+        try:
+            type_name_by_code[str(int(raw_code))] = account_type.name
+        except (TypeError, ValueError):
+            pass
+    return type_name_by_code
+
+
+def sort_accounts_as_hierarchy(accounts: List[ERPAccountOut]) -> List[ERPAccountOut]:
+    accounts_by_id = {str(account.id): account for account in accounts if str(account.id or "").strip()}
+    children_by_parent = {}
+    roots = []
+
+    for account in accounts:
+        parent_id = str(account.parent_id or "").strip()
+        if parent_id and parent_id != "0" and parent_id in accounts_by_id:
+            children_by_parent.setdefault(parent_id, []).append(account)
+        else:
+            roots.append(account)
+
+    def account_sort_key(account: ERPAccountOut):
+        return (
+            str(account.account_code or "").casefold(),
+            str(account.account_name or "").casefold(),
+            str(account.id or ""),
+        )
+
+    for child_accounts in children_by_parent.values():
+        child_accounts.sort(key=account_sort_key)
+    roots.sort(key=account_sort_key)
+
+    ordered_accounts = []
+    visited = set()
+
+    def visit(account: ERPAccountOut, level: int):
+        account_key = str(account.id or account.account_code or "")
+        if account_key in visited:
+            return
+        visited.add(account_key)
+
+        child_accounts = children_by_parent.get(str(account.id), [])
+        account.level = level
+        account.has_children = bool(child_accounts)
+        if account.parent_id and account.parent_id in accounts_by_id:
+            parent_account = accounts_by_id[account.parent_id]
+            account.parent = f"{parent_account.account_code} - {parent_account.account_name}".strip(" -")
+        elif account.parent_id in {"", "0"}:
+            account.parent = "-"
+        ordered_accounts.append(account)
+
+        for child_account in child_accounts:
+            visit(child_account, level + 1)
+
+    for root_account in roots:
+        visit(root_account, 0)
+
+    for account in sorted(accounts, key=account_sort_key):
+        visit(account, 0)
+
+    return ordered_accounts
+
+
+ACCOUNT_MAPPING_DEFINITIONS = [
+    ("cash_sales", "Cash sales tender"),
+    ("mpesa_sales", "M-Pesa sales tender"),
+    ("card_sales", "Card sales tender"),
+    ("sales_revenue", "Sales revenue"),
+    ("sales_tax", "Sales tax payable"),
+    ("accounts_receivable", "Accounts receivable"),
+    ("inventory_asset", "Inventory asset"),
+    ("cost_of_goods_sold", "Cost of goods sold"),
+    ("purchase_payable", "Supplier payable"),
+    ("discount_allowed", "Discount allowed"),
+    ("payout_cash", "Cash payout"),
+    ("rounding_difference", "Rounding difference"),
+]
+ACCOUNT_MAPPING_LABEL_BY_KEY = dict(ACCOUNT_MAPPING_DEFINITIONS)
+
+
+async def get_erp_account_docs(query: Optional[dict] = None, limit: int = 1000):
+    query = query or {}
+    return await combined_account_collection.find(query).to_list(length=limit)
+
+
+def build_combined_account_doc(account_id: int, payload: ERPAccountCreate) -> dict:
+    now = datetime.utcnow()
+    return {
+        "ID": account_id,
+        "AccountType": int(payload.account_type or 0),
+        "Number": payload.number.strip(),
+        "Currency": int(payload.currency or 0),
+        "AccountName": payload.account_name.strip(),
+        "SubAccountof": int(payload.sub_account_of or 0),
+        "Description": str(payload.description or "").strip(),
+        "Note": str(payload.note or "").strip(),
+        "TaxLineMapping": 0,
+        "BalanceTotals": 0.0,
+        "Inactive": 1 if payload.inactive else 0,
+        "PayoutMapID": 0,
+        "LastReconcilled": None,
+        "EndingReconcilledBalance": 0.0,
+        "isBalanceSheet": 1 if payload.is_balance_sheet else 0,
+        "CommissionGL": 0,
+        "CommissionRate": 0.0,
+        "OtherGLTenders": 0,
+        "2021_2022": 0.0,
+        "2022_2023": 0.0,
+        "2023_2024": 0.0,
+        "2024_2025": 0.0,
+        "2025_2026": 0.0,
+        "cTarget": 0.0,
+        "CreatedAt": now,
+        "LastUpdated": now,
+    }
+
+
+async def find_erp_account(account_id: Optional[str] = "", account_code: Optional[str] = ""):
+    or_filters = []
+    normalized_id = str(account_id or "").strip()
+    normalized_code = str(account_code or "").strip()
+
+    if normalized_id:
+        or_filters.append({"ID": normalized_id})
+        if normalized_id.isdigit():
+            or_filters.append({"ID": int(normalized_id)})
+        try:
+            or_filters.append({"_id": ObjectId(normalized_id)})
+        except Exception:
+            or_filters.append({"_id": normalized_id})
+
+    if normalized_code:
+        escaped_code = f"^{re.escape(normalized_code)}$"
+        or_filters.extend(
+            [
+                {"Number": {"$regex": escaped_code, "$options": "i"}},
+                {"AccountCode": {"$regex": escaped_code, "$options": "i"}},
+                {"Code": {"$regex": escaped_code, "$options": "i"}},
+                {"CodeNum": {"$regex": escaped_code, "$options": "i"}},
+                {"AccountNumber": {"$regex": escaped_code, "$options": "i"}},
+            ]
+        )
+
+    if not or_filters:
+        return None
+
+    query = {"$or": or_filters}
+    return await combined_account_collection.find_one(query)
+
+
+async def map_account_mapping_for_erp(doc: dict) -> ERPAccountMappingOut:
+    mapping_key = str(doc.get("MappingKey", "") or "")
+    account_doc = await find_erp_account(
+        account_id=str(doc.get("AccountID", "") or ""),
+        account_code=str(doc.get("AccountCode", "") or ""),
+    )
+    account = map_account_for_erp(account_doc) if account_doc else None
+    return ERPAccountMappingOut(
+        mapping_key=mapping_key,
+        label=str(doc.get("Label") or ACCOUNT_MAPPING_LABEL_BY_KEY.get(mapping_key, mapping_key)),
+        account_id=account.id if account else str(doc.get("AccountID", "") or ""),
+        account_code=account.account_code if account else str(doc.get("AccountCode", "") or ""),
+        account_name=account.account_name if account else "",
+        account_type=account.account_type if account else "",
+        updated_at=parse_optional_erp_datetime(doc.get("UpdatedAt")),
+    )
+
+
 def normalize_adjustment_status(value: str) -> str:
     normalized = str(value or "").strip().title()
     return normalized if normalized in ADJUSTMENT_STATUSES else "Pending"
@@ -2248,6 +2572,125 @@ async def list_erp_categories(search: Optional[str] = Query(default="")):
         ]
 
     return sorted(categories, key=lambda category: (category.name or "").lower())
+
+
+@app.get("/erp/accounts", response_model=List[ERPAccountOut])
+async def list_erp_accounts(
+    search: Optional[str] = Query(default=""),
+    limit: int = Query(default=1000, ge=1, le=5000),
+):
+    query = {}
+    search_value = str(search or "").strip()
+    if search_value:
+        query = {
+            "$or": [
+                {"AccountCode": {"$regex": search_value, "$options": "i"}},
+                {"Code": {"$regex": search_value, "$options": "i"}},
+                {"CodeNum": {"$regex": search_value, "$options": "i"}},
+                {"AccountNumber": {"$regex": search_value, "$options": "i"}},
+                {"Number": {"$regex": search_value, "$options": "i"}},
+                {"AccountName": {"$regex": search_value, "$options": "i"}},
+                {"Name": {"$regex": search_value, "$options": "i"}},
+                {"Description": {"$regex": search_value, "$options": "i"}},
+                {"Note": {"$regex": search_value, "$options": "i"}},
+                {"AccountType": {"$regex": search_value, "$options": "i"}},
+                {"Type": {"$regex": search_value, "$options": "i"}},
+            ]
+        }
+
+    account_docs = await get_erp_account_docs(query, limit)
+    accounts = [map_account_for_erp(doc) for doc in account_docs]
+    type_name_by_code = await get_account_type_name_by_code()
+    for account in accounts:
+        account.account_type = type_name_by_code.get(str(account.account_type), account.account_type)
+    return sort_accounts_as_hierarchy(accounts)
+
+
+@app.get("/erp/account-types", response_model=List[ERPAccountTypeOut])
+async def list_erp_account_types():
+    type_docs = await account_collection.find({}).to_list(length=500)
+    account_types = [map_account_type_for_erp(doc) for doc in type_docs]
+    return sorted(
+        account_types,
+        key=lambda account_type: (
+            str(account_type.code or "").casefold(),
+            str(account_type.name or "").casefold(),
+        ),
+    )
+
+
+@app.post("/erp/accounts", response_model=ERPAccountOut, status_code=201)
+async def create_erp_account(payload: ERPAccountCreate):
+    number = payload.number.strip()
+    account_name = payload.account_name.strip()
+    if not number:
+        raise HTTPException(status_code=400, detail="Account code is required")
+    if not account_name:
+        raise HTTPException(status_code=400, detail="Account name is required")
+
+    existing = await combined_account_collection.find_one(
+        {"Number": {"$regex": f"^{re.escape(number)}$", "$options": "i"}}
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Account code already exists")
+
+    latest = await combined_account_collection.find({}, {"ID": 1}).sort("ID", -1).limit(1).to_list(1)
+    next_id = int((latest[0] if latest else {}).get("ID", 0) or 0) + 1
+    doc = build_combined_account_doc(next_id, payload)
+    await combined_account_collection.insert_one(doc)
+    return map_account_for_erp(doc)
+
+
+@app.get("/erp/account-mappings", response_model=List[ERPAccountMappingOut])
+async def list_erp_account_mappings():
+    existing_docs = await account_mapping_collection.find({}).to_list(length=500)
+    docs_by_key = {str(doc.get("MappingKey", "") or ""): doc for doc in existing_docs}
+    mappings = []
+
+    for mapping_key, label in ACCOUNT_MAPPING_DEFINITIONS:
+        doc = docs_by_key.get(mapping_key) or {
+            "MappingKey": mapping_key,
+            "Label": label,
+            "AccountID": "",
+            "AccountCode": "",
+        }
+        mappings.append(await map_account_mapping_for_erp(doc))
+
+    return mappings
+
+
+@app.put("/erp/account-mappings", response_model=List[ERPAccountMappingOut])
+async def update_erp_account_mappings(payload: ERPAccountMappingsUpdate):
+    now = datetime.utcnow()
+
+    for mapping in payload.mappings:
+        mapping_key = str(mapping.mapping_key or "").strip()
+        if mapping_key not in ACCOUNT_MAPPING_LABEL_BY_KEY:
+            raise HTTPException(status_code=400, detail=f"Unknown account mapping: {mapping_key}")
+
+        account_doc = await find_erp_account(
+            account_id=mapping.account_id,
+            account_code=mapping.account_code,
+        )
+        if not account_doc:
+            raise HTTPException(status_code=400, detail=f"Account not found for {ACCOUNT_MAPPING_LABEL_BY_KEY[mapping_key]}")
+
+        account = map_account_for_erp(account_doc)
+        await account_mapping_collection.update_one(
+            {"MappingKey": mapping_key},
+            {
+                "$set": {
+                    "MappingKey": mapping_key,
+                    "Label": ACCOUNT_MAPPING_LABEL_BY_KEY[mapping_key],
+                    "AccountID": account.id,
+                    "AccountCode": account.account_code,
+                    "UpdatedAt": now,
+                }
+            },
+            upsert=True,
+        )
+
+    return await list_erp_account_mappings()
 
 
 @app.post("/erp/categories", response_model=ERPCategoryOut, status_code=201)

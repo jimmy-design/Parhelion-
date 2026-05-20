@@ -9,6 +9,7 @@ import {
   BriefcaseBusiness,
   Boxes,
   Gift,
+  ReceiptText,
   ShoppingCart,
   Truck,
   Landmark,
@@ -19,6 +20,11 @@ import {
   UserRoundCog,
   UserRoundPlus,
   Handshake,
+  Building2,
+  BookOpenCheck,
+  CreditCard,
+  FileText,
+  WalletCards,
   ContactRound,
   ShieldCheck,
   Tags,
@@ -122,6 +128,18 @@ const EMPTY_LOYALTY_CUSTOMER_FORM = {
   points: "0",
   balance: "0",
   enabled: true,
+};
+
+const EMPTY_ACCOUNT_FORM = {
+  number: "",
+  accountName: "",
+  accountType: "0",
+  currency: "0",
+  subAccountOf: "0",
+  description: "",
+  note: "",
+  inactive: false,
+  isBalanceSheet: false,
 };
 
 const EMPTY_PRICE_CHANGE_PRICE = {
@@ -1776,6 +1794,112 @@ function ErpApp({ currentUser, onLogout }) {
     ],
     []
   );
+  const financeData = useMemo(
+    () => ({
+      "bills-payment": {
+        columns: ["Bill No", "Supplier", "Due Date", "Amount", "Status"],
+        rows: [
+          ["BILL-24018", "FoamTech Ltd", "03 Apr 2026", "86,400", "Pending"],
+          ["BILL-24019", "SoftLine Fabrics", "05 Apr 2026", "42,750", "Scheduled"],
+          ["BILL-24020", "SpringCore Metals", "08 Apr 2026", "118,900", "Approved"],
+        ],
+      },
+      suppliers: {
+        columns: ["Code", "Supplier Name", "Balance", "Last Payment", "Status"],
+        rows: [
+          ["SUP011", "FoamTech Ltd", "86,400", "29 Mar 2026", "Active"],
+          ["SUP012", "SoftLine Fabrics", "42,750", "27 Mar 2026", "Active"],
+          ["SUP013", "SpringCore Metals", "118,900", "25 Mar 2026", "On Hold"],
+        ],
+      },
+      "payment-vouchers": {
+        columns: ["Voucher No", "Payee", "Payment Mode", "Amount", "Status"],
+        rows: [
+          ["PV-24041", "FoamTech Ltd", "Bank Transfer", "86,400", "Draft"],
+          ["PV-24042", "Rent Account", "Cheque", "125,000", "Approved"],
+          ["PV-24043", "Utilities", "M-Pesa", "18,600", "Posted"],
+        ],
+      },
+      "chart-of-accounts": {
+        columns: ["Account Code", "Account Name", "Type", "Parent", "Status"],
+        rows: [
+          ["1000", "Cash and Bank", "Asset", "-", "Active"],
+          ["2000", "Trade Creditors", "Liability", "-", "Active"],
+          ["5000", "Operating Expenses", "Expense", "-", "Active"],
+        ],
+      },
+      "account-properties": {
+        columns: ["Account", "Property", "Value", "Updated By", "Status"],
+        rows: [
+          ["Cash and Bank", "Posting Allowed", "Yes", "Admin", "Active"],
+          ["Trade Creditors", "Requires Approval", "Yes", "Admin", "Active"],
+          ["Operating Expenses", "Budget Control", "Enabled", "Admin", "Active"],
+        ],
+      },
+      payouts: {
+        columns: ["Payout No", "Recipient", "Method", "Amount", "Status"],
+        rows: [
+          ["POUT-24011", "Branch Petty Cash", "Cash", "15,000", "Issued"],
+          ["POUT-24012", "Delivery Refunds", "M-Pesa", "7,200", "Pending"],
+          ["POUT-24013", "Staff Claim", "Bank Transfer", "12,450", "Approved"],
+        ],
+      },
+    }),
+    []
+  );
+  const financeTabs = useMemo(
+    () => [
+      {
+        id: "bills-payment",
+        label: "Bills Payment",
+        hint: "Track supplier bills, due dates, approvals, and settlement status.",
+        icon: ReceiptText,
+        tone: "tone-suppliers",
+        actions: ["New Bill", "Pay Bill", "Refresh"],
+      },
+      {
+        id: "suppliers",
+        label: "Suppliers",
+        hint: "Review supplier balances, finance status, and payment history.",
+        icon: Building2,
+        tone: "tone-items",
+        actions: ["Supplier Statement", "Schedule Payment", "Refresh"],
+      },
+      {
+        id: "payment-vouchers",
+        label: "Payment Vouchers",
+        hint: "Prepare, approve, and post payment vouchers.",
+        icon: FileText,
+        tone: "tone-users",
+        actions: ["New Voucher", "Approve Voucher", "Post Voucher"],
+      },
+      {
+        id: "chart-of-accounts",
+        label: "Chart of Accounts",
+        hint: "Maintain ledger account structure and posting categories.",
+        icon: BookOpenCheck,
+        tone: "tone-roles",
+        actions: ["New Account", "Properties", "Refresh"],
+      },
+      {
+        id: "account-properties",
+        label: "Account Properties",
+        hint: "Configure account rules, controls, and approval properties.",
+        icon: CreditCard,
+        tone: "tone-categories",
+        actions: ["Edit Properties", "Save Rules", "Refresh"],
+      },
+      {
+        id: "payouts",
+        label: "Payouts",
+        hint: "Manage cash, bank, and mobile money payouts.",
+        icon: WalletCards,
+        tone: "tone-customers",
+        actions: ["New Payout", "Approve Payout", "Refresh"],
+      },
+    ],
+    []
+  );
   const userRoleOptions = useMemo(
     () => ["Cashier", "Supervisor", "Administrator"],
     []
@@ -1802,6 +1926,7 @@ function ErpApp({ currentUser, onLogout }) {
   const [activeManagementTab, setActiveManagementTab] = useState("items");
   const [activeInventoryTab, setActiveInventoryTab] = useState("stock-overview");
   const [activeToolsTab, setActiveToolsTab] = useState("gift-voucher-tool");
+  const [activeFinanceTab, setActiveFinanceTab] = useState("bills-payment");
   const [shelfLabelItems, setShelfLabelItems] = useState([]);
   const [selectedShelfLabelRowId, setSelectedShelfLabelRowId] = useState("");
   const [showShelfLabelPreview, setShowShelfLabelPreview] = useState(false);
@@ -1837,6 +1962,20 @@ function ErpApp({ currentUser, onLogout }) {
   const [suppliersRecords, setSuppliersRecords] = useState([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
   const [suppliersError, setSuppliersError] = useState("");
+  const [accountsRecords, setAccountsRecords] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState("");
+  const [accountTypesRecords, setAccountTypesRecords] = useState([]);
+  const [accountTypesLoading, setAccountTypesLoading] = useState(false);
+  const [accountTypesLoaded, setAccountTypesLoaded] = useState(false);
+  const [accountMappingsRecords, setAccountMappingsRecords] = useState([]);
+  const [accountMappingsLoading, setAccountMappingsLoading] = useState(false);
+  const [accountMappingsError, setAccountMappingsError] = useState("");
+  const [showAddAccountForm, setShowAddAccountForm] = useState(false);
+  const [showAccountMappingsForm, setShowAccountMappingsForm] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [savingAccountMappings, setSavingAccountMappings] = useState(false);
+  const [selectedFinanceRowKey, setSelectedFinanceRowKey] = useState("");
   const [purchaseOrdersRecords, setPurchaseOrdersRecords] = useState([]);
   const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
   const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
@@ -1954,25 +2093,34 @@ function ErpApp({ currentUser, onLogout }) {
     parentId: "",
     status: "Active",
   });
+  const [newAccountForm, setNewAccountForm] = useState({ ...EMPTY_ACCOUNT_FORM });
+  const [accountMappingDraft, setAccountMappingDraft] = useState({});
 
   const activeItem = navItems.find((item) => item.id === activeNav) || navItems[0];
   const isInventoryWorkspace = activeNav === "inventory";
   const isToolsWorkspace = activeNav === "tools";
-  const isWorkspaceView = activeNav === "managment" || isInventoryWorkspace || isToolsWorkspace;
+  const isFinanceWorkspace = activeNav === "finance";
+  const isWorkspaceView =
+    activeNav === "managment" || isInventoryWorkspace || isToolsWorkspace || isFinanceWorkspace;
   const selectedManagementTab =
     managementTabs.find((tab) => tab.id === activeManagementTab) || managementTabs[0];
   const selectedInventoryTab =
     inventoryTabs.find((tab) => tab.id === activeInventoryTab) || inventoryTabs[0];
   const selectedToolsTab = toolsTabs.find((tab) => tab.id === activeToolsTab) || toolsTabs[0];
+  const selectedFinanceTab = financeTabs.find((tab) => tab.id === activeFinanceTab) || financeTabs[0];
   const selectedWorkspaceTab = isInventoryWorkspace
     ? selectedInventoryTab
     : isToolsWorkspace
     ? selectedToolsTab
+    : isFinanceWorkspace
+    ? selectedFinanceTab
     : selectedManagementTab;
   const workspaceTabs = isInventoryWorkspace
     ? inventoryTabs
     : isToolsWorkspace
     ? toolsTabs
+    : isFinanceWorkspace
+    ? financeTabs
     : managementTabs;
   const isItemsView = activeNav === "managment" && activeManagementTab === "items";
   const isSuppliersView = activeNav === "managment" && activeManagementTab === "suppliers";
@@ -1987,6 +2135,8 @@ function ErpApp({ currentUser, onLogout }) {
   const isLabelToolView = activeNav === "tools" && activeToolsTab === "label-tool";
   const isItemLabelToolView = isShelfLabelToolView || isLabelToolView;
   const isCustomerLoyaltyView = activeNav === "tools" && activeToolsTab === "customer-loyalty";
+  const isChartOfAccountsView = activeNav === "finance" && activeFinanceTab === "chart-of-accounts";
+  const isAccountPropertiesView = activeNav === "finance" && activeFinanceTab === "account-properties";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
     Number(dashboardSummary.totalBaskets || 0) > 0 || Number(dashboardSummary.totalSales || 0) > 0;
@@ -2187,6 +2337,8 @@ function ErpApp({ currentUser, onLogout }) {
     showAddLoyaltyCustomerForm ||
     showInventoryItemPropertiesModal ||
     showAddCategoryForm ||
+    showAddAccountForm ||
+    showAccountMappingsForm ||
     showAddUserForm ||
     showFingerprintModal;
   const shouldBlockEscapeLogout =
@@ -2291,6 +2443,67 @@ function ErpApp({ currentUser, onLogout }) {
       ]),
     }),
     [categoriesRecords]
+  );
+
+  const accountsTableData = useMemo(
+    () => ({
+      columns: ["Account Code", "Account Name", "Type", "Parent", "Status"],
+      rows: accountsRecords.map((account) => [
+        account.account_code || account.id || "",
+        account.account_name || "",
+        account.account_type || "",
+        account.parent || "-",
+        account.status || "Active",
+      ]),
+    }),
+    [accountsRecords]
+  );
+
+  const accountMappingsTableData = useMemo(
+    () => ({
+      columns: ["Posting Area", "Account Code", "Account Name", "Type", "Updated"],
+      rows: accountMappingsRecords.map((mapping) => [
+        mapping.label || mapping.mapping_key || "",
+        mapping.account_code || "Not mapped",
+        mapping.account_name || "",
+        mapping.account_type || "",
+        mapping.updated_at ? new Date(mapping.updated_at).toLocaleString() : "",
+      ]),
+    }),
+    [accountMappingsRecords]
+  );
+
+  const accountSelectOptions = useMemo(
+    () => [
+      { value: "", label: "Choose account" },
+      ...accountsRecords.map((account) => ({
+        value: account.id || account.account_code || "",
+        label: `${account.account_code || account.id || ""} - ${account.account_name || ""}`.trim(),
+      })),
+    ],
+    [accountsRecords]
+  );
+
+  const parentAccountOptions = useMemo(
+    () => [
+      { value: "0", label: "No parent" },
+      ...accountsRecords.map((account) => ({
+        value: String(account.id || "0"),
+        label: `${account.account_code || account.id || ""} - ${account.account_name || ""}`.trim(),
+      })),
+    ],
+    [accountsRecords]
+  );
+
+  const accountTypeSelectOptions = useMemo(
+    () => [
+      { value: "0", label: "Unclassified" },
+      ...accountTypesRecords.map((accountType) => ({
+        value: String(Number(accountType.code || 0) || accountType.code || "0"),
+        label: `${accountType.name || "Unnamed type"} (${accountType.code || "0"})`,
+      })),
+    ],
+    [accountTypesRecords]
   );
 
   const categoryReferenceRecords = useMemo(
@@ -2772,10 +2985,18 @@ function ErpApp({ currentUser, onLogout }) {
     : isCustomerLoyaltyView
     ? loyaltyCustomersTableData
     : toolsData[activeToolsTab] || toolsData[toolsTabs[0].id];
+  const selectedFinanceData =
+    activeFinanceTab === "chart-of-accounts"
+      ? accountsTableData
+      : activeFinanceTab === "account-properties"
+      ? accountMappingsTableData
+      : financeData[activeFinanceTab] || financeData[financeTabs[0].id];
   const selectedWorkspaceData = isInventoryWorkspace
     ? selectedInventoryData
     : isToolsWorkspace
     ? selectedToolsData
+    : isFinanceWorkspace
+    ? selectedFinanceData
     : selectedManagementData;
   const adjustmentsSearchContext = useMemo(
     () => resolveAdjustmentSearchContext(searchTerm, itemsRecords),
@@ -2800,8 +3021,12 @@ function ErpApp({ currentUser, onLogout }) {
     : (selectedToolsData?.rows || []).filter((row) =>
         row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
       );
+  const filteredFinanceRows = (selectedFinanceData?.rows || []).filter((row) =>
+    row.some((cell) => String(cell).toLowerCase().includes(searchTerm.toLowerCase()))
+  );
   const filteredItemsRecords = itemsRecords;
   const filteredSuppliersRecords = suppliersRecords;
+  const filteredAccountsRecords = accountsRecords;
   const filteredPurchaseOrdersRecords = purchaseOrdersRecords;
   const filteredPriceChangesRecords = priceChangesRecords;
   const filteredUsersRecords = usersRecords;
@@ -2820,10 +3045,14 @@ function ErpApp({ currentUser, onLogout }) {
     ? filteredUsersRecords.length
     : isCategoriesView
     ? filteredCategoriesRecords.length
+    : isChartOfAccountsView
+    ? filteredAccountsRecords.length
     : isInventoryWorkspace
     ? filteredInventoryRows.length
     : isToolsWorkspace
     ? filteredToolsRows.length
+    : isFinanceWorkspace
+    ? filteredFinanceRows.length
     : filteredManagementRows.length;
   const totalPages = Math.max(1, Math.ceil(totalRecords / rowsPerPage));
   const safePage = Math.min(currentPage, totalPages);
@@ -2833,8 +3062,10 @@ function ErpApp({ currentUser, onLogout }) {
   const pagedManagementRows = filteredManagementRows.slice(startIndex, startIndex + rowsPerPage);
   const pagedInventoryRows = filteredInventoryRows.slice(startIndex, startIndex + rowsPerPage);
   const pagedToolsRows = filteredToolsRows.slice(startIndex, startIndex + rowsPerPage);
+  const pagedFinanceRows = filteredFinanceRows.slice(startIndex, startIndex + rowsPerPage);
   const pagedItemsRecords = filteredItemsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedSuppliersRecords = filteredSuppliersRecords.slice(startIndex, startIndex + rowsPerPage);
+  const pagedAccountsRecords = filteredAccountsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPurchaseOrdersRecords = filteredPurchaseOrdersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedAdjustmentsRecords = filteredAdjustmentsRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedPriceChangesRecords = filteredPriceChangesRecords.slice(startIndex, startIndex + rowsPerPage);
@@ -3794,6 +4025,160 @@ function ErpApp({ currentUser, onLogout }) {
     pushAlert("info", `${actionLabel} for ${selectedToolsTab.label} is ready for the next tools screen.`);
   };
 
+  const handleFinanceModuleAction = (actionLabel) => {
+    const openAccountMappings = () => {
+      loadAccounts("");
+      loadAccountMappings();
+      setShowAccountMappingsForm(true);
+    };
+
+    if (selectedFinanceTab.id === "chart-of-accounts" && actionLabel === "New Account") {
+      setNewAccountForm({ ...EMPTY_ACCOUNT_FORM });
+      setAccountsError("");
+      loadAccountTypes();
+      loadAccounts("");
+      setShowAddAccountForm(true);
+      return;
+    }
+
+    if (
+      (selectedFinanceTab.id === "chart-of-accounts" && actionLabel === "Properties") ||
+      (selectedFinanceTab.id === "account-properties" && actionLabel === "Edit Properties")
+    ) {
+      openAccountMappings();
+      return;
+    }
+
+    if (actionLabel === "Refresh") {
+      if (selectedFinanceTab.id === "chart-of-accounts") {
+        loadAccounts(searchTerm);
+        return;
+      }
+      if (selectedFinanceTab.id === "account-properties") {
+        loadAccountMappings();
+        return;
+      }
+      pushAlert("success", `${selectedFinanceTab.label} refreshed.`);
+      return;
+    }
+
+    if (selectedFinanceTab.id === "account-properties" && actionLabel === "Save Rules") {
+      openAccountMappings();
+      return;
+    }
+
+    pushAlert("info", `${actionLabel} for ${selectedFinanceTab.label} is ready for the next finance screen.`);
+  };
+
+  const closeAccountForm = () => {
+    setShowAddAccountForm(false);
+    setSavingAccount(false);
+    setAccountsError("");
+    setNewAccountForm({ ...EMPTY_ACCOUNT_FORM });
+  };
+
+  const updateAccountForm = (field, value) => {
+    setNewAccountForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleAddAccount = async (event) => {
+    event.preventDefault();
+
+    const number = newAccountForm.number.trim();
+    const accountName = newAccountForm.accountName.trim();
+    if (!number || !accountName) {
+      const message = "Account code and account name are required.";
+      setAccountsError(message);
+      pushAlert("warning", message);
+      return;
+    }
+
+    setSavingAccount(true);
+    setAccountsError("");
+    try {
+      const saved = await fetchJsonWithFallback(
+        "/erp/accounts",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number,
+            account_name: accountName,
+            account_type: Number(newAccountForm.accountType || 0),
+            currency: Number(newAccountForm.currency || 0),
+            sub_account_of: Number(newAccountForm.subAccountOf || 0),
+            description: newAccountForm.description.trim(),
+            note: newAccountForm.note.trim(),
+            inactive: Boolean(newAccountForm.inactive),
+            is_balance_sheet: Boolean(newAccountForm.isBalanceSheet),
+          }),
+        },
+        "Failed to create account"
+      );
+
+      setAccountsRecords((prev) => [saved, ...prev.filter((account) => account.id !== saved.id)]);
+      await loadAccounts(searchTerm);
+      closeAccountForm();
+      pushAlert("success", `Account ${saved.account_code || number} created.`);
+    } catch (error) {
+      const message = error.message || "Failed to create account";
+      setAccountsError(message);
+      pushAlert("error", message);
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  const closeAccountMappingsForm = () => {
+    setShowAccountMappingsForm(false);
+    setSavingAccountMappings(false);
+    setAccountMappingsError("");
+  };
+
+  const updateAccountMappingDraft = (mappingKey, accountId) => {
+    setAccountMappingDraft((prev) => ({ ...prev, [mappingKey]: accountId }));
+  };
+
+  const handleSaveAccountMappings = async (event) => {
+    event.preventDefault();
+
+    const mappings = accountMappingsRecords.map((mapping) => ({
+      mapping_key: mapping.mapping_key,
+      account_id: accountMappingDraft[mapping.mapping_key] || "",
+    }));
+    const missing = mappings.find((mapping) => !mapping.account_id);
+    if (missing) {
+      const label =
+        accountMappingsRecords.find((mapping) => mapping.mapping_key === missing.mapping_key)?.label ||
+        missing.mapping_key;
+      pushAlert("warning", `Choose an account for ${label}.`);
+      return;
+    }
+
+    setSavingAccountMappings(true);
+    setAccountMappingsError("");
+    try {
+      const saved = await fetchJsonWithFallback(
+        "/erp/account-mappings",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mappings }),
+        },
+        "Failed to save account mappings"
+      );
+      setAccountMappingsRecords(Array.isArray(saved) ? saved : []);
+      closeAccountMappingsForm();
+      pushAlert("success", "Account mappings saved.");
+    } catch (error) {
+      const message = error.message || "Failed to save account mappings";
+      setAccountMappingsError(message);
+      pushAlert("error", message);
+    } finally {
+      setSavingAccountMappings(false);
+    }
+  };
+
   const closeLoyaltyCustomerForm = () => {
     setShowAddLoyaltyCustomerForm(false);
     setSavingLoyaltyCustomer(false);
@@ -4716,6 +5101,77 @@ function ErpApp({ currentUser, onLogout }) {
       setSuppliersRecords([]);
     } finally {
       setSuppliersLoading(false);
+    }
+  };
+
+  const loadAccounts = async (search = "") => {
+    setAccountsLoading(true);
+    setAccountsError("");
+    try {
+      const query = search.trim()
+        ? `?search=${encodeURIComponent(search.trim())}`
+        : "";
+      const data = await fetchJsonWithFallback(
+        `/erp/accounts${query}`,
+        undefined,
+        "Failed to load accounts"
+      );
+      setAccountsRecords(Array.isArray(data) ? data : []);
+    } catch (error) {
+      const message = error.message || "Failed to load accounts";
+      setAccountsError(message);
+      pushAlert("error", message);
+      setAccountsRecords([]);
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
+
+  const loadAccountTypes = async () => {
+    setAccountTypesLoading(true);
+    try {
+      const data = await fetchJsonWithFallback(
+        "/erp/account-types",
+        undefined,
+        "Failed to load account types"
+      );
+      setAccountTypesRecords(Array.isArray(data) ? data : []);
+    } catch (error) {
+      const message = error.message || "Failed to load account types";
+      if (message.toLowerCase() !== "not found") {
+        pushAlert("error", message);
+      }
+      setAccountTypesRecords([]);
+    } finally {
+      setAccountTypesLoaded(true);
+      setAccountTypesLoading(false);
+    }
+  };
+
+  const loadAccountMappings = async () => {
+    setAccountMappingsLoading(true);
+    setAccountMappingsError("");
+    try {
+      const data = await fetchJsonWithFallback(
+        "/erp/account-mappings",
+        undefined,
+        "Failed to load account mappings"
+      );
+      const mappings = Array.isArray(data) ? data : [];
+      setAccountMappingsRecords(mappings);
+      setAccountMappingDraft(
+        mappings.reduce((draft, mapping) => {
+          draft[mapping.mapping_key] = mapping.account_id || "";
+          return draft;
+        }, {})
+      );
+    } catch (error) {
+      const message = error.message || "Failed to load account mappings";
+      setAccountMappingsError(message);
+      pushAlert("error", message);
+      setAccountMappingsRecords([]);
+    } finally {
+      setAccountMappingsLoading(false);
     }
   };
 
@@ -5644,6 +6100,30 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isCategoriesView, searchTerm]);
 
   useEffect(() => {
+    if (!isChartOfAccountsView) return;
+
+    const timer = setTimeout(() => {
+      loadAccounts(searchTerm);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [isChartOfAccountsView, searchTerm]);
+
+  useEffect(() => {
+    if (!isFinanceWorkspace) return;
+    if (accountTypesLoaded || accountTypesLoading) return;
+    loadAccountTypes();
+  }, [isFinanceWorkspace, accountTypesLoaded, accountTypesLoading]);
+
+  useEffect(() => {
+    if (!isAccountPropertiesView) return;
+    loadAccountMappings();
+    if (!accountsRecords.length && !accountsLoading) {
+      loadAccounts("");
+    }
+  }, [isAccountPropertiesView]);
+
+  useEffect(() => {
     if (!isPurchaseOrdersView) return;
 
     const timer = setTimeout(() => {
@@ -5697,7 +6177,16 @@ function ErpApp({ currentUser, onLogout }) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeNav, activeManagementTab, activeInventoryTab, activeToolsTab, searchTerm, rowsPerPage]);
+    setSelectedFinanceRowKey("");
+  }, [
+    activeNav,
+    activeManagementTab,
+    activeInventoryTab,
+    activeToolsTab,
+    activeFinanceTab,
+    searchTerm,
+    rowsPerPage,
+  ]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -5987,6 +6476,8 @@ function ErpApp({ currentUser, onLogout }) {
                   handleInventoryModuleAction(selectedInventoryTab.actions[0] || "Open module");
                 } else if (isToolsWorkspace) {
                   handleToolsModuleAction(selectedToolsTab.actions[0] || "Open tool");
+                } else if (isFinanceWorkspace) {
+                  handleFinanceModuleAction(selectedFinanceTab.actions[0] || "Open finance");
                 }
               }}
             >
@@ -6004,6 +6495,8 @@ function ErpApp({ currentUser, onLogout }) {
                 ? "Add Member"
                 : isToolsWorkspace
                 ? selectedToolsTab.actions[0] || "Open Tool"
+                : isFinanceWorkspace
+                ? selectedFinanceTab.actions[0] || "Open Finance"
                 : "New"}
             </button>
             {onLogout && (
@@ -6027,6 +6520,8 @@ function ErpApp({ currentUser, onLogout }) {
                 ? "Inventory sub menu"
                 : isToolsWorkspace
                 ? "Tools sub menu"
+                : isFinanceWorkspace
+                ? "Finance sub menu"
                 : "Managment sub menu"
             }
           >
@@ -6039,6 +6534,8 @@ function ErpApp({ currentUser, onLogout }) {
                     setActiveInventoryTab(tab.id);
                   } else if (isToolsWorkspace) {
                     setActiveToolsTab(tab.id);
+                  } else if (isFinanceWorkspace) {
+                    setActiveFinanceTab(tab.id);
                   } else {
                     setActiveManagementTab(tab.id);
                   }
@@ -6237,6 +6734,20 @@ function ErpApp({ currentUser, onLogout }) {
                       ))}
                     </div>
                   )}
+                  {isFinanceWorkspace && (
+                    <div className="erp-search-actions">
+                      {selectedFinanceTab.actions.map((actionLabel, actionIndex) => (
+                        <button
+                          key={`${selectedFinanceTab.id}-${actionLabel}`}
+                          type="button"
+                          className={`erp-mini-btn ${actionIndex === 0 ? "erp-mini-btn-primary" : ""}`.trim()}
+                          onClick={() => handleFinanceModuleAction(actionLabel)}
+                        >
+                          {actionLabel}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {(isItemsView || isStockOverviewView || isReorderView || isItemLabelToolView) && itemsLoading && (
                   <p className="erp-table-status">Loading items...</p>
@@ -6256,6 +6767,12 @@ function ErpApp({ currentUser, onLogout }) {
                 {isUsersView && usersError && <p className="erp-table-status erp-table-status-error">{usersError}</p>}
                 {isCategoriesView && categoriesLoading && <p className="erp-table-status">Loading categories...</p>}
                 {isCategoriesView && categoriesError && <p className="erp-table-status erp-table-status-error">{categoriesError}</p>}
+                {isChartOfAccountsView && accountsLoading && <p className="erp-table-status">Loading accounts...</p>}
+                {isChartOfAccountsView && accountsError && <p className="erp-table-status erp-table-status-error">{accountsError}</p>}
+                {isAccountPropertiesView && accountMappingsLoading && <p className="erp-table-status">Loading account mappings...</p>}
+                {isAccountPropertiesView && accountMappingsError && (
+                  <p className="erp-table-status erp-table-status-error">{accountMappingsError}</p>
+                )}
                 {isCustomerLoyaltyView && loyaltyCustomersLoading && <p className="erp-table-status">Loading loyalty customers...</p>}
                 {isCustomerLoyaltyView && loyaltyCustomersError && (
                   <p className="erp-table-status erp-table-status-error">{loyaltyCustomersError}</p>
@@ -6365,6 +6882,8 @@ function ErpApp({ currentUser, onLogout }) {
                         isItemLabelToolView ? "is-shelf-label-table" : ""
                       } ${
                         isCustomerLoyaltyView ? "is-loyalty-customers-table" : ""
+                      } ${
+                        isChartOfAccountsView ? "is-chart-of-accounts-table" : ""
                       }`.trim()}
                     >
                       <thead>
@@ -6596,6 +7115,51 @@ function ErpApp({ currentUser, onLogout }) {
                               ))}
                             </tr>
                           ))
+                        : isChartOfAccountsView
+                        ? pagedAccountsRecords.map((account, rowIndex) => {
+                            const rowKey = `chart-of-accounts-${account.id || account.account_code || rowIndex}`;
+                            const isSelected = selectedFinanceRowKey === rowKey;
+                            const level = Math.min(Number(account.level || 0), 8);
+                            return (
+                              <tr
+                                key={rowKey}
+                                className={`${isSelected ? "is-selected-row" : ""} ${
+                                  account.has_children ? "is-account-group-row" : ""
+                                }`.trim()}
+                                onClick={() => setSelectedFinanceRowKey(rowKey)}
+                              >
+                                <td>{account.account_code || account.id || ""}</td>
+                                <td>
+                                  <span
+                                    className="erp-account-tree-cell"
+                                    style={{ "--account-level": level }}
+                                  >
+                                    {level > 0 && <span className="erp-account-branch">|--</span>}
+                                    <span>{account.account_name || ""}</span>
+                                  </span>
+                                </td>
+                                <td>{account.account_type || ""}</td>
+                                <td>{account.parent || "-"}</td>
+                                <td>{account.status || "Active"}</td>
+                              </tr>
+                            );
+                          })
+                        : isFinanceWorkspace
+                        ? pagedFinanceRows.map((row, rowIndex) => {
+                            const rowKey = `${activeFinanceTab}-${row[0] || ""}-${startIndex + rowIndex}`;
+                            const isSelected = selectedFinanceRowKey === rowKey;
+                            return (
+                              <tr
+                                key={rowKey}
+                                className={isSelected ? "is-selected-row" : ""}
+                                onClick={() => setSelectedFinanceRowKey(rowKey)}
+                              >
+                                {row.map((cell, cellIndex) => (
+                                  <td key={`${activeFinanceTab}-${rowIndex}-${cellIndex}`}>{cell}</td>
+                                ))}
+                              </tr>
+                            );
+                          })
                           : pagedManagementRows.map((row, rowIndex) => (
                               <tr key={`${activeManagementTab}-${rowIndex}`}>
                                 {row.map((cell, cellIndex) => (
@@ -6613,10 +7177,14 @@ function ErpApp({ currentUser, onLogout }) {
                           ? filteredUsersRecords.length === 0
                           : isCategoriesView
                           ? filteredCategoriesRecords.length === 0
+                          : isChartOfAccountsView
+                          ? filteredAccountsRecords.length === 0
                           : isInventoryWorkspace
                           ? filteredInventoryRows.length === 0
                           : isToolsWorkspace
                           ? filteredToolsRows.length === 0
+                          : isFinanceWorkspace
+                          ? filteredFinanceRows.length === 0
                           : filteredManagementRows.length === 0) && (
                           <tr>
                             <td colSpan={selectedWorkspaceData.columns.length} className="erp-table-empty">
@@ -8428,6 +8996,147 @@ function ErpApp({ currentUser, onLogout }) {
                     disabled={savingInventoryItemProperties}
                   >
                     {savingInventoryItemProperties ? "Saving..." : "Save Level"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {isFinanceWorkspace && showAddAccountForm && (
+          <div className="erp-modal-overlay" onClick={closeAccountForm}>
+            <div className="erp-modal-card erp-account-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-modal-header">
+                <h3>Create New Account</h3>
+                <button type="button" className="erp-window-btn erp-window-btn-close" onClick={closeAccountForm} aria-label="Cancel">
+                  <X size={13} />
+                </button>
+              </div>
+              <form className="erp-add-form-modal erp-account-form-modal" onSubmit={handleAddAccount}>
+                {accountsError && <p className="erp-form-error is-span-2">{accountsError}</p>}
+                <div className="erp-form-field">
+                  <label>Account Code</label>
+                  <input
+                    type="text"
+                    value={newAccountForm.number}
+                    onChange={(e) => updateAccountForm("number", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Account Name</label>
+                  <input
+                    type="text"
+                    value={newAccountForm.accountName}
+                    onChange={(e) => updateAccountForm("accountName", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Type</label>
+                  <ErpCustomSelect
+                    value={newAccountForm.accountType}
+                    options={accountTypeSelectOptions}
+                    placeholder={accountTypesLoading ? "Loading types..." : "Choose type"}
+                    disabled={accountTypesLoading}
+                    onChange={(nextValue) => updateAccountForm("accountType", String(nextValue))}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Parent Account</label>
+                  <ErpCustomSelect
+                    value={newAccountForm.subAccountOf}
+                    options={parentAccountOptions}
+                    onChange={(nextValue) => updateAccountForm("subAccountOf", String(nextValue))}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Currency</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newAccountForm.currency}
+                    onChange={(e) => updateAccountForm("currency", e.target.value)}
+                  />
+                </div>
+                <label className="erp-switch-field">
+                  <span>Balance Sheet</span>
+                  <span className="erp-switch">
+                    <input
+                      type="checkbox"
+                      checked={newAccountForm.isBalanceSheet}
+                      onChange={(e) => updateAccountForm("isBalanceSheet", e.target.checked)}
+                    />
+                    <span className="erp-switch-slider" />
+                  </span>
+                </label>
+                <div className="erp-form-field is-span-2">
+                  <label>Description</label>
+                  <input
+                    type="text"
+                    value={newAccountForm.description}
+                    onChange={(e) => updateAccountForm("description", e.target.value)}
+                  />
+                </div>
+                <div className="erp-form-field is-span-2">
+                  <label>Note</label>
+                  <input
+                    type="text"
+                    value={newAccountForm.note}
+                    onChange={(e) => updateAccountForm("note", e.target.value)}
+                  />
+                </div>
+                <label className="erp-switch-field">
+                  <span>Inactive</span>
+                  <span className="erp-switch">
+                    <input
+                      type="checkbox"
+                      checked={newAccountForm.inactive}
+                      onChange={(e) => updateAccountForm("inactive", e.target.checked)}
+                    />
+                    <span className="erp-switch-slider" />
+                  </span>
+                </label>
+                <div className="erp-modal-actions is-span-2">
+                  <button type="button" className="erp-footer-btn erp-footer-btn-secondary" onClick={closeAccountForm}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="erp-footer-btn erp-footer-btn-primary" disabled={savingAccount}>
+                    {savingAccount ? "Saving..." : "Save Account"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {isFinanceWorkspace && showAccountMappingsForm && (
+          <div className="erp-modal-overlay" onClick={closeAccountMappingsForm}>
+            <div className="erp-modal-card erp-account-mapping-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-modal-header">
+                <h3>Account Posting Properties</h3>
+                <button type="button" className="erp-window-btn erp-window-btn-close" onClick={closeAccountMappingsForm} aria-label="Cancel">
+                  <X size={13} />
+                </button>
+              </div>
+              <form className="erp-account-mapping-form" onSubmit={handleSaveAccountMappings}>
+                {accountMappingsError && <p className="erp-form-error">{accountMappingsError}</p>}
+                {accountMappingsRecords.map((mapping) => (
+                  <div key={mapping.mapping_key} className="erp-account-mapping-row">
+                    <label>{mapping.label}</label>
+                    <ErpCustomSelect
+                      value={accountMappingDraft[mapping.mapping_key] || ""}
+                      options={accountSelectOptions}
+                      placeholder={accountsLoading ? "Loading accounts..." : "Choose account"}
+                      disabled={accountsLoading || accountSelectOptions.length <= 1}
+                      onChange={(nextValue) => updateAccountMappingDraft(mapping.mapping_key, String(nextValue))}
+                    />
+                  </div>
+                ))}
+                <div className="erp-modal-actions">
+                  <button type="button" className="erp-footer-btn erp-footer-btn-secondary" onClick={closeAccountMappingsForm}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="erp-footer-btn erp-footer-btn-primary" disabled={savingAccountMappings}>
+                    {savingAccountMappings ? "Saving..." : "Save Mappings"}
                   </button>
                 </div>
               </form>

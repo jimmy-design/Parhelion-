@@ -1793,6 +1793,56 @@
   width: 7%;
 }
 
+.erp-data-table.is-chart-of-accounts-table thead th:nth-child(1),
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(1) {
+  width: 12%;
+}
+
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(1) {
+  font-weight: 800;
+  color: #16233a;
+}
+
+.erp-data-table.is-chart-of-accounts-table thead th:nth-child(2),
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(2) {
+  width: 33%;
+}
+
+.erp-data-table.is-chart-of-accounts-table thead th:nth-child(3),
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(3) {
+  width: 18%;
+}
+
+.erp-data-table.is-chart-of-accounts-table thead th:nth-child(4),
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(4) {
+  width: 30%;
+}
+
+.erp-data-table.is-chart-of-accounts-table thead th:nth-child(5),
+.erp-data-table.is-chart-of-accounts-table tbody td:nth-child(5) {
+  width: 7%;
+  text-align: center;
+}
+
+.erp-data-table.is-chart-of-accounts-table tbody tr.is-account-group-row td {
+  font-weight: 700;
+  color: #1f3259;
+}
+
+.erp-account-tree-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding-left: calc(var(--account-level, 0) * 18px);
+}
+
+.erp-account-branch {
+  color: #7b879c;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
 .erp-stock-cell {
   padding-right: 14px;
 }
@@ -3035,6 +3085,60 @@
 .erp-loyalty-customer-modal-card {
   width: min(680px, calc(100vw - 64px));
   max-width: 680px;
+}
+
+.erp-account-modal-card {
+  width: min(620px, calc(100vw - 64px));
+  max-width: 620px;
+}
+
+.erp-account-mapping-modal-card {
+  width: min(760px, calc(100vw - 64px));
+  max-width: 760px;
+  height: min(78vh, 720px);
+}
+
+.erp-account-form-modal .erp-switch-field {
+  align-self: end;
+  min-height: 34px;
+}
+
+.erp-account-mapping-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 0;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.erp-account-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(260px, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(212, 220, 233, 0.88);
+  border-radius: 8px;
+  background: rgba(247, 249, 252, 0.86);
+}
+
+.erp-account-mapping-row label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #24385f;
+}
+
+.erp-form-error {
+  margin: 0;
+  color: #9d3040;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.erp-form-error.is-span-2 {
+  grid-column: span 2;
 }
 
 .erp-loyalty-customer-form {
