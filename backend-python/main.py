@@ -558,6 +558,19 @@ class ERPGoodsReceivedOut(BaseModel):
     last_updated: datetime
 
 
+class ERPBillSourceOut(BaseModel):
+    po_number: str
+    source: str
+    supplier_id: int
+    supplier_name: str
+    store_id: int
+    amount_due: float
+    goods_received_id: Optional[int] = None
+    invoice_no: str = ""
+    delivery_no: str = ""
+    last_updated: datetime
+
+
 class ERPPriceBand(BaseModel):
     default: float = 0.0
     A: float = 0.0
@@ -1275,6 +1288,17 @@ def resolve_item_dashboard_category_name(
         return category_value
 
     return uncategorized_label
+
+
+def build_dashboard_item_sales_match_key(description, price) -> str:
+    normalized_description = str(description or "").strip().casefold()
+    if not normalized_description:
+        return ""
+    try:
+        normalized_price = f"{float(price or 0):.4f}"
+    except (TypeError, ValueError):
+        normalized_price = "0.0000"
+    return f"{normalized_description}|{normalized_price}"
 
 
 async def resolve_item_category_selection(category_name: str = "", category_id: int = 0):
@@ -2455,12 +2479,27 @@ async def get_item(code: str):
     selling_price = get_item_effective_sale_price(item)
     return {
         "code": item.get("ItemLookupCode", ""),
+        "item_id": item.get("ItemID", item.get("ID", "")),
         "description": item.get("Description", ""),
         "price": selling_price,
         "taxable": item.get("Taxable", False),
         "quantity": stock_available,
         "stock_available": stock_available,
         "stock": stock_available,
+        "category_id": item.get("CategoryID", item.get("DepartmentID", 0)),
+        "category": resolve_item_dashboard_category_name(
+            item,
+            categories_by_id={
+                get_category_identity(category): category
+                for category in await categories_collection.find({}).to_list(length=1000)
+                if get_category_identity(category) > 0
+            },
+            categories_by_name={
+                normalize_category_name(category.get("name", category.get("Name", ""))).casefold(): category
+                for category in await categories_collection.find({}).to_list(length=1000)
+                if normalize_category_name(category.get("name", category.get("Name", "")))
+            },
+        ),
     }
 
 
@@ -3235,6 +3274,80 @@ async def get_erp_purchase_order_by_number(po_number: str):
         purchase_order,
         entries_lookup.get(purchase_order_id, []),
         supplier_lookup.get(int(purchase_order.get("SupplierID", 0) or 0), ""),
+    )
+
+
+@app.get("/erp/bills/source/by-po-number/{po_number}", response_model=ERPBillSourceOut)
+async def get_erp_bill_source_by_po_number(po_number: str):
+    search_value = str(po_number or "").strip()
+    if not search_value:
+        raise HTTPException(status_code=400, detail="PO number is required")
+
+    purchase_order = await purchase_order_collection.find_one(
+        {"PONumber": {"$regex": f"^{re.escape(search_value)}$", "$options": "i"}}
+    )
+    if not purchase_order:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    resolved_purchase_order_id = int(
+        purchase_order.get("WorkSheetID", purchase_order.get("ID", 0)) or 0
+    )
+    resolved_po_number = str(purchase_order.get("PONumber", search_value) or search_value)
+    supplier_id = int(purchase_order.get("SupplierID", 0) or 0)
+    supplier_lookup = await build_supplier_name_lookup([supplier_id])
+    supplier_name = supplier_lookup.get(supplier_id, "")
+    store_id = int(purchase_order.get("StoreID", 1) or 1)
+
+    latest_goods_received = await goods_received_collection.find_one(
+        {
+            "$or": [
+                {"PurchaseOrderID": resolved_purchase_order_id},
+                {"WorkSheetID": resolved_purchase_order_id},
+                {"PONumber": {"$regex": f"^{re.escape(resolved_po_number)}$", "$options": "i"}},
+            ]
+        },
+        sort=[("DateCreated", -1), ("ID", -1)],
+    )
+    if latest_goods_received:
+        goods_received_id = int(latest_goods_received.get("ID", 0) or 0)
+        received_entries = await goods_received_entry_collection.find(
+            {"GoodsReceivedID": goods_received_id}
+        ).to_list(10000)
+        amount_due = sum(
+            float(entry.get("QuantityRecieved", entry.get("QuantityReceived", 0)) or 0)
+            * float(entry.get("Price", 0) or 0)
+            * (1 + (float(entry.get("TaxRate", 0) or 0) / 100))
+            for entry in received_entries
+        )
+        return ERPBillSourceOut(
+            po_number=resolved_po_number,
+            source="goods_received",
+            supplier_id=supplier_id,
+            supplier_name=supplier_name,
+            store_id=int(latest_goods_received.get("StoreID", store_id) or store_id),
+            amount_due=amount_due,
+            goods_received_id=goods_received_id,
+            invoice_no=str(latest_goods_received.get("InvoiceNo", "") or ""),
+            delivery_no=str(latest_goods_received.get("DeliveryNo", "") or ""),
+            last_updated=parse_erp_datetime(latest_goods_received.get("LastUpdated")),
+        )
+
+    purchase_order_entries = await purchase_order_entries_collection.find(
+        {"PurchaseOrderID": resolved_purchase_order_id}
+    ).to_list(10000)
+    mapped_purchase_order = map_purchase_order_for_erp(
+        purchase_order,
+        purchase_order_entries,
+        supplier_name,
+    )
+    return ERPBillSourceOut(
+        po_number=resolved_po_number,
+        source="purchase_order",
+        supplier_id=supplier_id,
+        supplier_name=supplier_name,
+        store_id=store_id,
+        amount_due=mapped_purchase_order.total_amount,
+        last_updated=mapped_purchase_order.last_updated,
     )
 
 
@@ -4584,6 +4697,10 @@ async def get_erp_dashboard_category_sales(
         {
             "_id": 0,
             "ItemID": 1,
+            "ItemLookupCode": 1,
+            "CategoryID": 1,
+            "CategoryName": 1,
+            "Description": 1,
             "Quantity": 1,
             "Price": 1,
         },
@@ -4604,14 +4721,26 @@ async def get_erp_dashboard_category_sales(
             if str(row.get("ItemID", "")).strip()
         }
     )
+    item_descriptions = sorted(
+        {
+            str(row.get("Description", "")).strip()
+            for row in transaction_items
+            if str(row.get("Description", "")).strip()
+        }
+    )
     numeric_item_keys = [int(key) for key in item_keys if key.isdigit()]
 
     item_match_filters = []
     if item_keys:
         item_match_filters.append({"ItemLookupCode": {"$in": item_keys}})
+        item_match_filters.append({"Alias": {"$in": item_keys}})
+        item_match_filters.append({"alias": {"$in": item_keys}})
+        item_match_filters.append({"Barcode": {"$in": item_keys}})
     if numeric_item_keys:
         item_match_filters.append({"ItemLookupCode": {"$in": numeric_item_keys}})
         item_match_filters.append({"ItemID": {"$in": numeric_item_keys}})
+    if item_descriptions:
+        item_match_filters.append({"Description": {"$in": item_descriptions}})
 
     item_docs = await item_collection.find(
         {"$or": item_match_filters} if item_match_filters else {"_id": None},
@@ -4619,6 +4748,13 @@ async def get_erp_dashboard_category_sales(
             "_id": 0,
             "ItemLookupCode": 1,
             "ItemID": 1,
+            "Alias": 1,
+            "alias": 1,
+            "Barcode": 1,
+            "Description": 1,
+            "Price": 1,
+            "SalePrice": 1,
+            "PriceA": 1,
             "Category": 1,
             "CategoryID": 1,
             "DepartmentID": 1,
@@ -4651,6 +4787,7 @@ async def get_erp_dashboard_category_sales(
             categories_by_name[category_name.casefold()] = category_doc
 
     category_lookup = {}
+    category_lookup_by_description_price = {}
     for item_doc in item_docs:
         category_value = resolve_item_dashboard_category_name(
             item_doc,
@@ -4660,16 +4797,39 @@ async def get_erp_dashboard_category_sales(
 
         lookup_code = str(item_doc.get("ItemLookupCode", "") or "").strip()
         item_id = str(item_doc.get("ItemID", "") or "").strip()
+        alias = str(item_doc.get("Alias", item_doc.get("alias", "")) or "").strip()
+        barcode = str(item_doc.get("Barcode", "") or "").strip()
+        description = str(item_doc.get("Description", "") or "").strip()
         if lookup_code:
             category_lookup[lookup_code] = category_value
         if item_id:
             category_lookup[item_id] = category_value
+        if alias:
+            category_lookup[alias] = category_value
+        if barcode:
+            category_lookup[barcode] = category_value
+        if description and description not in category_lookup:
+            category_lookup[description] = category_value
+        if description:
+            price_candidates = [
+                item_doc.get("Price"),
+                item_doc.get("SalePrice"),
+                item_doc.get("PriceA"),
+            ]
+            for price_candidate in price_candidates:
+                match_key = build_dashboard_item_sales_match_key(description, price_candidate)
+                if match_key and match_key not in category_lookup_by_description_price:
+                    category_lookup_by_description_price[match_key] = category_value
 
     category_totals = {}
     total_sales = 0.0
 
     for row in transaction_items:
         item_key = str(row.get("ItemID", "") or "").strip()
+        item_lookup_code = str(row.get("ItemLookupCode", "") or "").strip()
+        item_description = str(row.get("Description", "") or "").strip()
+        stored_category_name = normalize_category_name(row.get("CategoryName", ""))
+        stored_category_id = coerce_category_identity(row.get("CategoryID", 0))
         quantity = float(row.get("Quantity", 0) or 0)
         price = float(row.get("Price", 0) or 0)
         line_total = quantity * price
@@ -4677,7 +4837,16 @@ async def get_erp_dashboard_category_sales(
         if line_total == 0:
             continue
 
-        category_name = category_lookup.get(item_key) or "Uncategorized"
+        description_price_key = build_dashboard_item_sales_match_key(item_description, price)
+        category_name = (
+            stored_category_name
+            or resolve_linked_category_name(categories_by_id.get(stored_category_id))
+            or category_lookup.get(item_lookup_code)
+            or category_lookup.get(item_key)
+            or category_lookup_by_description_price.get(description_price_key)
+            or category_lookup.get(item_description)
+            or "Uncategorized"
+        )
         category_totals[category_name] = float(category_totals.get(category_name, 0) or 0) + line_total
         total_sales += line_total
 
@@ -4734,6 +4903,7 @@ async def post_transaction(data: TransactionData):
     try:
         transaction_id = int(datetime.now().timestamp())  # Unique numeric ID
         required_quantities = {}
+        source_items_by_code = {}
 
         for item in data.items:
             requested_quantity = int(item.quantity or 0)
@@ -4744,7 +4914,23 @@ async def post_transaction(data: TransactionData):
                 )
             required_quantities[item.code] = required_quantities.get(item.code, 0) + requested_quantity
 
+        category_docs = await categories_collection.find({}).to_list(length=1000)
+        categories_by_id = {
+            get_category_identity(category): category
+            for category in category_docs
+            if get_category_identity(category) > 0
+        }
+        categories_by_name = {
+            normalize_category_name(category.get("name", category.get("Name", ""))).casefold(): category
+            for category in category_docs
+            if normalize_category_name(category.get("name", category.get("Name", "")))
+        }
+
         for item_code, requested_quantity in required_quantities.items():
+            source_item = await item_collection.find_one({"ItemLookupCode": item_code})
+            if not source_item:
+                raise HTTPException(status_code=404, detail=f"Item {item_code} not found")
+
             update_result = await item_collection.update_one(
                 {
                     "ItemLookupCode": item_code,
@@ -4757,9 +4943,8 @@ async def post_transaction(data: TransactionData):
             )
 
             if update_result.modified_count == 0:
-                current_item = await item_collection.find_one({"ItemLookupCode": item_code})
-                description = current_item.get("Description", item_code) if current_item else item_code
-                available_quantity = get_item_stock_quantity(current_item or {})
+                description = source_item.get("Description", item_code)
+                available_quantity = get_item_stock_quantity(source_item or {})
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -4769,6 +4954,7 @@ async def post_transaction(data: TransactionData):
                 )
 
             deducted_items.append((item_code, requested_quantity))
+            source_items_by_code[item_code] = source_item
 
         transaction_doc = {
             "TransactionID": transaction_id,
@@ -4787,11 +4973,25 @@ async def post_transaction(data: TransactionData):
 
         items_list = []
         for index, item in enumerate(data.items):
+            source_item = source_items_by_code.get(item.code) or {}
+            resolved_category_id = coerce_category_identity(
+                source_item.get("CategoryID", source_item.get("DepartmentID", item.category_id or 0))
+            )
+            resolved_category_name = resolve_item_dashboard_category_name(
+                source_item or {"CategoryID": item.category_id, "Category": item.category},
+                categories_by_id=categories_by_id,
+                categories_by_name=categories_by_name,
+            )
             item_doc = {
                 "TransactionID": transaction_id,
                 "DetailedID": transaction_id * 100 + index,
-                "ItemID": item.code,
-                "Description": item.description,
+                "ItemID": source_item.get("ItemID", item.item_id or item.code),
+                "ItemLookupCode": source_item.get("ItemLookupCode", item.code),
+                "Alias": source_item.get("Alias", source_item.get("alias", "")),
+                "Barcode": source_item.get("Barcode", source_item.get("Alias", "")),
+                "Description": source_item.get("Description", item.description),
+                "CategoryID": resolved_category_id,
+                "CategoryName": resolved_category_name,
                 "Quantity": item.quantity,
                 "Price": item.price,
                 "Taxable": item.taxable,

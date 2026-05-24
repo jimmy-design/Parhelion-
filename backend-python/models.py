@@ -10,6 +10,9 @@ class Item(BaseModel):
     price: float
     taxable: bool
     rep: str
+    item_id: Optional[int] = None
+    category_id: Optional[int] = None
+    category: Optional[str] = ""
 
 class Tender(BaseModel):
     code: str

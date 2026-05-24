@@ -292,6 +292,20 @@ function formatLocalDateValue(date = new Date()) {
   return normalized.toISOString().slice(0, 10);
 }
 
+function createEmptyBillForm() {
+  return {
+    invoiceDate: formatLocalDateValue(new Date()),
+    invoiceNo: "",
+    amountDue: "",
+    billDueDate: "",
+    supplierId: "",
+    supplierName: "",
+    locationStoreId: "",
+    lpoReceived: false,
+    lpoNumber: "",
+  };
+}
+
 function formatLocalDateTimeValue(date = new Date()) {
   const normalized = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return normalized.toISOString().slice(0, 16);
@@ -1796,14 +1810,6 @@ function ErpApp({ currentUser, onLogout }) {
   );
   const financeData = useMemo(
     () => ({
-      "bills-payment": {
-        columns: ["Bill No", "Supplier", "Due Date", "Amount", "Status"],
-        rows: [
-          ["BILL-24018", "FoamTech Ltd", "03 Apr 2026", "86,400", "Pending"],
-          ["BILL-24019", "SoftLine Fabrics", "05 Apr 2026", "42,750", "Scheduled"],
-          ["BILL-24020", "SpringCore Metals", "08 Apr 2026", "118,900", "Approved"],
-        ],
-      },
       suppliers: {
         columns: ["Code", "Supplier Name", "Balance", "Last Payment", "Status"],
         rows: [
@@ -1976,6 +1982,52 @@ function ErpApp({ currentUser, onLogout }) {
   const [savingAccount, setSavingAccount] = useState(false);
   const [savingAccountMappings, setSavingAccountMappings] = useState(false);
   const [selectedFinanceRowKey, setSelectedFinanceRowKey] = useState("");
+  const [showNewBillForm, setShowNewBillForm] = useState(false);
+  const [newBillForm, setNewBillForm] = useState(() => createEmptyBillForm());
+  const [billFormError, setBillFormError] = useState("");
+  const [savingBill, setSavingBill] = useState(false);
+  const [billSourceLookupLoading, setBillSourceLookupLoading] = useState(false);
+  const [billsPaymentRecords, setBillsPaymentRecords] = useState(() => [
+    {
+      id: "bill-24018",
+      invoiceNo: "BILL-24018",
+      invoiceDate: "03 Apr 2026",
+      amountDue: "86,400.00",
+      billDueDate: "03 Apr 2026",
+      supplierId: "11",
+      supplier: "FoamTech Ltd",
+      locationStoreId: "1",
+      location: "Warehouse A",
+      lpoNumber: "LPO-24018",
+      status: "Pending",
+    },
+    {
+      id: "bill-24019",
+      invoiceNo: "BILL-24019",
+      invoiceDate: "05 Apr 2026",
+      amountDue: "42,750.00",
+      billDueDate: "05 Apr 2026",
+      supplierId: "12",
+      supplier: "SoftLine Fabrics",
+      locationStoreId: "2",
+      location: "Thika Branch",
+      lpoNumber: "",
+      status: "Scheduled",
+    },
+    {
+      id: "bill-24020",
+      invoiceNo: "BILL-24020",
+      invoiceDate: "08 Apr 2026",
+      amountDue: "118,900.00",
+      billDueDate: "08 Apr 2026",
+      supplierId: "13",
+      supplier: "SpringCore Metals",
+      locationStoreId: "1",
+      location: "Warehouse A",
+      lpoNumber: "LPO-24020",
+      status: "Approved",
+    },
+  ]);
   const [purchaseOrdersRecords, setPurchaseOrdersRecords] = useState([]);
   const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
   const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
@@ -2115,6 +2167,39 @@ function ErpApp({ currentUser, onLogout }) {
     : isFinanceWorkspace
     ? selectedFinanceTab
     : selectedManagementTab;
+  const billsPaymentTableData = useMemo(
+    () => ({
+      columns: [
+        "Invoice No",
+        "Invoice Date",
+        "Supplier",
+        "Bill Due Date",
+        "Location",
+        "LPO No",
+        "Amount Due",
+        "Status",
+      ],
+      rows: billsPaymentRecords.map((bill) => [
+        bill.invoiceNo,
+        bill.invoiceDate,
+        bill.supplier,
+        bill.billDueDate,
+        bill.location,
+        bill.lpoNumber || "-",
+        bill.amountDue,
+        bill.status,
+      ]),
+    }),
+    [billsPaymentRecords]
+  );
+  const billSupplierOptions = useMemo(
+    () =>
+      suppliersRecords.map((supplier) => ({
+        value: String(supplier.id || ""),
+        label: (supplier.supplier_name || supplier.code || "Supplier").trim(),
+      })),
+    [suppliersRecords]
+  );
   const workspaceTabs = isInventoryWorkspace
     ? inventoryTabs
     : isToolsWorkspace
@@ -2137,6 +2222,7 @@ function ErpApp({ currentUser, onLogout }) {
   const isCustomerLoyaltyView = activeNav === "tools" && activeToolsTab === "customer-loyalty";
   const isChartOfAccountsView = activeNav === "finance" && activeFinanceTab === "chart-of-accounts";
   const isAccountPropertiesView = activeNav === "finance" && activeFinanceTab === "account-properties";
+  const isBillsPaymentView = activeNav === "finance" && activeFinanceTab === "bills-payment";
   const isDashboardView = activeNav === "dashboard";
   const hasDashboardSales =
     Number(dashboardSummary.totalBaskets || 0) > 0 || Number(dashboardSummary.totalSales || 0) > 0;
@@ -2339,6 +2425,7 @@ function ErpApp({ currentUser, onLogout }) {
     showAddCategoryForm ||
     showAddAccountForm ||
     showAccountMappingsForm ||
+    showNewBillForm ||
     showAddUserForm ||
     showFingerprintModal;
   const shouldBlockEscapeLogout =
@@ -2986,7 +3073,9 @@ function ErpApp({ currentUser, onLogout }) {
     ? loyaltyCustomersTableData
     : toolsData[activeToolsTab] || toolsData[toolsTabs[0].id];
   const selectedFinanceData =
-    activeFinanceTab === "chart-of-accounts"
+    activeFinanceTab === "bills-payment"
+      ? billsPaymentTableData
+      : activeFinanceTab === "chart-of-accounts"
       ? accountsTableData
       : activeFinanceTab === "account-properties"
       ? accountMappingsTableData
@@ -4032,6 +4121,15 @@ function ErpApp({ currentUser, onLogout }) {
       setShowAccountMappingsForm(true);
     };
 
+    if (selectedFinanceTab.id === "bills-payment" && actionLabel === "New Bill") {
+      setNewBillForm(createEmptyBillForm());
+      setBillFormError("");
+      loadSuppliers("");
+      loadPriceChangeBranches();
+      setShowNewBillForm(true);
+      return;
+    }
+
     if (selectedFinanceTab.id === "chart-of-accounts" && actionLabel === "New Account") {
       setNewAccountForm({ ...EMPTY_ACCOUNT_FORM });
       setAccountsError("");
@@ -4068,6 +4166,126 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     pushAlert("info", `${actionLabel} for ${selectedFinanceTab.label} is ready for the next finance screen.`);
+  };
+
+  const closeNewBillForm = () => {
+    setShowNewBillForm(false);
+    setSavingBill(false);
+    setBillSourceLookupLoading(false);
+    setBillFormError("");
+    setNewBillForm(createEmptyBillForm());
+  };
+
+  const updateNewBillForm = (field, value) => {
+    setNewBillForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === "lpoReceived" && !value) {
+        next.lpoNumber = "";
+      }
+      return next;
+    });
+  };
+
+  const lookupBillSourceByPoNumber = async (poNumber = newBillForm.lpoNumber) => {
+    const searchValue = String(poNumber || "").trim();
+    if (!newBillForm.lpoReceived || !searchValue) {
+      return;
+    }
+
+    setBillSourceLookupLoading(true);
+    setBillFormError("");
+    try {
+      const billSource = await fetchJsonWithFallback(
+        `/erp/bills/source/by-po-number/${encodeURIComponent(searchValue)}`,
+        undefined,
+        "Failed to load PO details"
+      );
+      setNewBillForm((prev) => ({
+        ...prev,
+        lpoNumber: billSource.po_number || searchValue,
+        supplierId: billSource.supplier_id ? String(billSource.supplier_id) : prev.supplierId,
+        supplierName: billSource.supplier_name || prev.supplierName,
+        amountDue: Number(billSource.amount_due || 0).toFixed(2),
+        locationStoreId: billSource.store_id ? String(billSource.store_id) : prev.locationStoreId,
+        invoiceNo: prev.invoiceNo || billSource.invoice_no || "",
+      }));
+      const sourceLabel = billSource.source === "goods_received" ? "goods received" : "purchase order";
+      pushAlert("success", `Loaded ${sourceLabel} details for ${billSource.po_number || searchValue}.`);
+    } catch (error) {
+      const message = error.message || "PO number was not found.";
+      setBillFormError(message);
+      pushAlert("error", message);
+    } finally {
+      setBillSourceLookupLoading(false);
+    }
+  };
+
+  const handleSaveNewBill = (event) => {
+    event.preventDefault();
+
+    const invoiceNo = newBillForm.invoiceNo.trim();
+    const invoiceDate = newBillForm.invoiceDate.trim();
+    const billDueDate = newBillForm.billDueDate.trim();
+    const supplierId = String(newBillForm.supplierId || "").trim();
+    const locationStoreId = String(newBillForm.locationStoreId || "").trim();
+    const lpoNumber = newBillForm.lpoNumber.trim();
+    const amountDue = Number(String(newBillForm.amountDue || "").replace(/,/g, ""));
+    const selectedBillSupplier = suppliersRecords.find(
+      (supplier) => String(supplier.id || "") === supplierId
+    );
+    const selectedBillLocation = priceChangeBranchOptions.find(
+      (branch) => String(branch.value || "") === locationStoreId
+    );
+    const supplier = String(selectedBillSupplier?.supplier_name || newBillForm.supplierName || "").trim();
+    const location = String(
+      selectedBillLocation?.label || (locationStoreId ? `Store ${locationStoreId}` : "")
+    ).trim();
+
+    if (
+      !invoiceDate ||
+      !invoiceNo ||
+      !billDueDate ||
+      !supplierId ||
+      !locationStoreId ||
+      !supplier ||
+      !location ||
+      !Number.isFinite(amountDue) ||
+      amountDue <= 0
+    ) {
+      const message = "Invoice date, invoice number, amount due, bill due date, supplier, and branch location are required.";
+      setBillFormError(message);
+      pushAlert("warning", message);
+      return;
+    }
+
+    if (newBillForm.lpoReceived && !lpoNumber) {
+      const message = "Enter the LPO number that was received.";
+      setBillFormError(message);
+      pushAlert("warning", message);
+      return;
+    }
+
+    setSavingBill(true);
+    const savedBill = {
+      id: `bill-${Date.now()}`,
+      invoiceNo,
+      invoiceDate: formatDisplayDateValue(invoiceDate),
+      amountDue: amountDue.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      billDueDate: formatDisplayDateValue(billDueDate),
+      supplierId,
+      supplier,
+      locationStoreId,
+      location,
+      lpoNumber: newBillForm.lpoReceived ? lpoNumber : "",
+      status: newBillForm.lpoReceived ? "LPO Received" : "Pending LPO",
+    };
+
+    setBillsPaymentRecords((prev) => [savedBill, ...prev]);
+    closeNewBillForm();
+    pushAlert("success", `Bill ${invoiceNo} added.`);
   };
 
   const closeAccountForm = () => {
@@ -6380,6 +6598,7 @@ function ErpApp({ currentUser, onLogout }) {
                   closeLoyaltyCustomerForm();
                   closePriceChangeComposer();
                   closeFingerprintModal();
+                  closeNewBillForm();
                   setShowShelfLabelPreview(false);
                   setSelectedSupplierId(null);
                   setSelectedUserId(null);
@@ -6884,6 +7103,8 @@ function ErpApp({ currentUser, onLogout }) {
                         isCustomerLoyaltyView ? "is-loyalty-customers-table" : ""
                       } ${
                         isChartOfAccountsView ? "is-chart-of-accounts-table" : ""
+                      } ${
+                        isBillsPaymentView ? "is-bills-payment-table" : ""
                       }`.trim()}
                     >
                       <thead>
@@ -8996,6 +9217,135 @@ function ErpApp({ currentUser, onLogout }) {
                     disabled={savingInventoryItemProperties}
                   >
                     {savingInventoryItemProperties ? "Saving..." : "Save Level"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {isFinanceWorkspace && showNewBillForm && (
+          <div className="erp-modal-overlay" onClick={closeNewBillForm}>
+            <div className="erp-modal-card erp-bill-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-modal-header">
+                <h3>New Bill</h3>
+                <button
+                  type="button"
+                  className="erp-window-btn erp-window-btn-close"
+                  onClick={closeNewBillForm}
+                  aria-label="Cancel"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <form className="erp-add-form-modal erp-bill-form-modal" onSubmit={handleSaveNewBill} noValidate>
+                {billFormError && <p className="erp-form-error is-span-2">{billFormError}</p>}
+                <div className="erp-form-field">
+                  <label>Invoice Date</label>
+                  <input
+                    type="date"
+                    value={newBillForm.invoiceDate}
+                    onChange={(e) => updateNewBillForm("invoiceDate", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Ref No / Invoice No</label>
+                  <input
+                    type="text"
+                    value={newBillForm.invoiceNo}
+                    onChange={(e) => updateNewBillForm("invoiceNo", e.target.value)}
+                    placeholder="Invoice number"
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Amount Due</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={newBillForm.amountDue}
+                    onChange={(e) => updateNewBillForm("amountDue", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Bill Due Date</label>
+                  <input
+                    type="date"
+                    value={newBillForm.billDueDate}
+                    onChange={(e) => updateNewBillForm("billDueDate", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Supplier</label>
+                  <ErpCustomSelect
+                    value={newBillForm.supplierId}
+                    options={billSupplierOptions}
+                    placeholder={suppliersLoading ? "Loading suppliers..." : "Select supplier"}
+                    disabled={suppliersLoading}
+                    onChange={(nextValue) => updateNewBillForm("supplierId", String(nextValue))}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Location</label>
+                  <ErpCustomSelect
+                    value={newBillForm.locationStoreId}
+                    options={priceChangeBranchOptions}
+                    placeholder={priceChangeBranchPlaceholder}
+                    disabled={priceChangeBranchUnavailable}
+                    onChange={(nextValue) => updateNewBillForm("locationStoreId", String(nextValue))}
+                  />
+                </div>
+                <label className="erp-switch-field erp-bill-lpo-switch">
+                  <span>LPO Received</span>
+                  <span className="erp-switch">
+                    <input
+                      type="checkbox"
+                      checked={newBillForm.lpoReceived}
+                      onChange={(e) => updateNewBillForm("lpoReceived", e.target.checked)}
+                    />
+                    <span className="erp-switch-slider" />
+                  </span>
+                </label>
+                <div className="erp-form-field">
+                  <label>LPO Number</label>
+                  <div className="erp-bill-lpo-lookup">
+                    <input
+                      type="text"
+                      value={newBillForm.lpoNumber}
+                      onChange={(e) => updateNewBillForm("lpoNumber", e.target.value)}
+                      onBlur={() => lookupBillSourceByPoNumber()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void lookupBillSourceByPoNumber(e.currentTarget.value);
+                        }
+                      }}
+                      placeholder="Load LPO number"
+                      disabled={!newBillForm.lpoReceived || billSourceLookupLoading}
+                    />
+                    <button
+                      type="button"
+                      className="erp-mini-btn erp-bill-lpo-lookup-btn"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => lookupBillSourceByPoNumber()}
+                      disabled={!newBillForm.lpoReceived || billSourceLookupLoading || !newBillForm.lpoNumber.trim()}
+                      aria-label="Load LPO details"
+                      title="Load LPO details"
+                    >
+                      <Search size={14} />
+                      <span>{billSourceLookupLoading ? "Loading" : "Load"}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="erp-modal-actions is-span-2">
+                  <button type="button" className="erp-footer-btn erp-footer-btn-secondary" onClick={closeNewBillForm}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="erp-footer-btn erp-footer-btn-primary" disabled={savingBill || billSourceLookupLoading}>
+                    {savingBill ? "Saving..." : "Save Bill"}
                   </button>
                 </div>
               </form>

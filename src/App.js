@@ -367,11 +367,14 @@ function App({ currentUser, onLogout }) {
         } else {
           const newItem = {
             code: itemCode,
+            item_id: data.item_id ?? null,
             description,
             quantity: 1,
             price: parseFloat(data.price),
             taxable: !!data.taxable,
             rep: 'T001',
+            category_id: data.category_id ?? null,
+            category: data.category || "",
           };
           setItems(prev => [newItem, ...prev]);
         }

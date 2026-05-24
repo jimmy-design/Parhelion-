@@ -1829,6 +1829,52 @@
   color: #1f3259;
 }
 
+.erp-data-table.is-bills-payment-table thead th:nth-child(1),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(1) {
+  width: 15%;
+}
+
+.erp-data-table.is-bills-payment-table tbody td:nth-child(1),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(7) {
+  font-weight: 700;
+  color: #263247;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(2),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(2) {
+  width: 11%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(3),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(3) {
+  width: 18%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(4),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(4) {
+  width: 11%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(5),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(5) {
+  width: 15%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(6),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(6) {
+  width: 11%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(7),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(7) {
+  width: 11%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(8),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(8) {
+  width: 8%;
+}
+
 .erp-account-tree-cell {
   display: inline-flex;
   align-items: center;
@@ -3092,6 +3138,36 @@
   max-width: 620px;
 }
 
+.erp-bill-modal-card {
+  width: min(560px, calc(100vw - 64px));
+  max-width: 560px;
+  height: auto;
+  max-height: calc(100vh - 96px);
+  overflow: visible;
+}
+
+.erp-bill-form-modal {
+  overflow: visible;
+}
+
+.erp-bill-lpo-switch {
+  align-self: end;
+  min-height: 34px;
+}
+
+.erp-bill-lpo-lookup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.erp-bill-lpo-lookup-btn {
+  height: 34px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
 .erp-account-mapping-modal-card {
   width: min(760px, calc(100vw - 64px));
   max-width: 760px;
@@ -3269,6 +3345,17 @@
   align-content: start;
 }
 
+.erp-modal-card .erp-add-form-modal.erp-bill-form-modal {
+  overflow: visible;
+  min-height: auto;
+}
+
+.erp-bill-form-modal .erp-custom-select-menu {
+  max-height: 92px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .erp-form-field {
   display: flex;
   flex-direction: column;
@@ -3290,6 +3377,13 @@
   color: #203247;
   font-size: 12px;
   outline: none;
+}
+
+.erp-add-form-modal input[type="date"],
+.erp-add-form-modal input[type="datetime-local"],
+.erp-supplier-form-modal input[type="date"],
+.erp-supplier-form-modal input[type="datetime-local"] {
+  color-scheme: light dark;
 }
 
 .erp-add-form-modal select {
@@ -3316,6 +3410,18 @@
 .erp-add-form-modal input[readonly] {
   background: #f4f6f9;
   color: #3d4c6b;
+}
+
+.erp-add-form-modal input:disabled {
+  cursor: not-allowed;
+  background: #eef2f7;
+  color: #7b879b;
+}
+
+.erp-add-form-modal select:disabled {
+  cursor: not-allowed;
+  background: #eef2f7;
+  color: #7b879b;
 }
 
 .erp-fingerprint-modal {
