@@ -545,7 +545,7 @@ function buildPurchaseOrderEntryFromItem(item, quantityOrdered, defaultTaxRate =
     itemLookupCode: String(item?.lookup_code || ""),
     itemDescription: String(item?.description || ""),
     quantityOrdered: String(quantityOrdered),
-    price: String(Number(item?.price || 0)),
+    price: String(Number(item?.cost || 0)),
     costedPrice: String(Number(item?.cost || 0)),
     taxRate: String(item?.taxable ? Number(defaultTaxRate || 16) : 0),
   };
@@ -818,7 +818,8 @@ function mapPurchaseOrderToReceiveGoodsForm(purchaseOrder) {
             quantityReceivedToDate: receivedToDate,
             quantityOutstanding: outstanding,
             quantityReceived: outstanding > 0 ? String(outstanding) : "0",
-            price: Number(entry?.price || 0),
+            price: Number(entry?.costed_price ?? entry?.price ?? 0),
+            costedPrice: Number(entry?.costed_price ?? entry?.price ?? 0),
             taxRate: Number(entry?.tax_rate || 0),
             orderNumber: String(entry?.order_number || purchaseOrder?.po_number || ""),
           };
@@ -2785,8 +2786,9 @@ function ErpApp({ currentUser, onLogout }) {
         (totals, entry) => {
           const quantityReceived = Number(entry.quantityReceived || 0);
           const quantityOrdered = Number(entry.quantityOrdered || 0);
-          const lineSubtotal = quantityReceived * Number(entry.price || 0);
-          const orderedSubtotal = quantityOrdered * Number(entry.price || 0);
+          const unitCost = Number(entry.costedPrice ?? entry.price ?? 0);
+          const lineSubtotal = quantityReceived * unitCost;
+          const orderedSubtotal = quantityOrdered * unitCost;
           const lineTax = lineSubtotal * (Number(entry.taxRate || 0) / 100);
           const orderedTax = orderedSubtotal * (Number(entry.taxRate || 0) / 100);
           return {
@@ -4858,7 +4860,7 @@ function ErpApp({ currentUser, onLogout }) {
               item_description: entry.itemDescription,
               quantity_received: entry.quantityReceivedNumber,
               order_number: entry.orderNumber || receiveGoodsPurchaseOrder.po_number || "",
-              price: Number(entry.price || 0),
+              price: Number(entry.costedPrice ?? entry.price ?? 0),
               tax_rate: Number(entry.taxRate || 0),
             })),
           }),
@@ -5946,8 +5948,8 @@ function ErpApp({ currentUser, onLogout }) {
         ) ||
         itemsRecords.find((item) => String(item.id || "") === String(entry.itemId || ""));
 
-      const derivedPrice = Number(sourceItem?.price ?? entry.price ?? 0);
       const derivedCost = Number(sourceItem?.cost ?? entry.costedPrice ?? 0);
+      const derivedPrice = derivedCost;
       const derivedTaxRate = sourceItem
         ? Number(sourceItem.taxable ? newPurchaseOrderForm.taxRate || entry.taxRate || 0 : 0)
         : Number(entry.taxRate || newPurchaseOrderForm.taxRate || 0);
@@ -6064,7 +6066,7 @@ function ErpApp({ currentUser, onLogout }) {
           item_lookup_code: entry.itemLookupCode,
           item_description: entry.itemDescription,
           quantity_ordered: entry.quantityOrdered,
-          price: entry.price,
+          price: entry.costedPrice,
           costed_price: entry.costedPrice,
           tax_rate: entry.taxRate,
         })),
@@ -8666,7 +8668,6 @@ function ErpApp({ currentUser, onLogout }) {
                             <th>Item Code</th>
                             <th>Description</th>
                             <th>Qty</th>
-                            <th>Price</th>
                             <th>Cost</th>
                             <th>Tax %</th>
                             <th>Cost Total</th>
@@ -8704,9 +8705,6 @@ function ErpApp({ currentUser, onLogout }) {
                                     />
                                   </td>
                                   <td className="erp-po-money-cell">
-                                    {Number(entry.price || 0).toLocaleString()}
-                                  </td>
-                                  <td className="erp-po-money-cell">
                                     {Number(entry.costedPrice || 0).toLocaleString()}
                                   </td>
                                   <td className="erp-po-tax-cell">
@@ -8729,7 +8727,7 @@ function ErpApp({ currentUser, onLogout }) {
                             })
                           ) : (
                             <tr>
-                              <td className="erp-po-table-empty" colSpan="8">
+                              <td className="erp-po-table-empty" colSpan="7">
                                 Scan an item lookup code or barcode above to add the first purchase
                                 order line.
                               </td>
@@ -8923,7 +8921,7 @@ function ErpApp({ currentUser, onLogout }) {
                             <th>Received</th>
                             <th>Outstanding</th>
                             <th>Receive Now</th>
-                            <th>Price</th>
+                            <th>Cost</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -8946,7 +8944,7 @@ function ErpApp({ currentUser, onLogout }) {
                                     onChange={(e) => updateReceiveGoodsEntry(entry.rowId, e.target.value)}
                                   />
                                 </td>
-                                <td className="erp-po-money-cell">{Number(entry.price || 0).toLocaleString()}</td>
+                                <td className="erp-po-money-cell">{Number(entry.costedPrice ?? entry.price ?? 0).toLocaleString()}</td>
                               </tr>
                             ))
                           ) : (

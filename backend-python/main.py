@@ -3431,6 +3431,52 @@ async def get_erp_purchase_order_by_number(po_number: str):
     )
 
 
+async def get_goods_received_bill_source(
+    purchase_order_id: int,
+    po_number: str,
+):
+    goods_received_docs = await goods_received_collection.find(
+        {
+            "$or": [
+                {"PurchaseOrderID": purchase_order_id},
+                {"WorkSheetID": purchase_order_id},
+                {"PONumber": {"$regex": f"^{re.escape(po_number)}$", "$options": "i"}},
+            ]
+        }
+    ).sort("DateCreated", -1).to_list(10000)
+
+    if not goods_received_docs:
+        return None
+
+    goods_received_ids = [
+        int(doc.get("ID", 0) or 0)
+        for doc in goods_received_docs
+        if int(doc.get("ID", 0) or 0) > 0
+    ]
+    if not goods_received_ids:
+        return None
+
+    received_entries = await goods_received_entry_collection.find(
+        {"GoodsReceivedID": {"$in": goods_received_ids}}
+    ).to_list(10000)
+    amount_due = sum(
+        float(entry.get("QuantityRecieved", entry.get("QuantityReceived", 0)) or 0)
+        * float(entry.get("CostedPrice", entry.get("Cost", entry.get("Price", 0))) or 0)
+        * (1 + (float(entry.get("TaxRate", 0) or 0) / 100))
+        for entry in received_entries
+    )
+    latest_goods_received = goods_received_docs[0]
+
+    return {
+        "amount_due": amount_due,
+        "goods_received_id": int(latest_goods_received.get("ID", 0) or 0),
+        "store_id": latest_goods_received.get("StoreID"),
+        "invoice_no": str(latest_goods_received.get("InvoiceNo", "") or ""),
+        "delivery_no": str(latest_goods_received.get("DeliveryNo", "") or ""),
+        "last_updated": parse_erp_datetime(latest_goods_received.get("LastUpdated")),
+    }
+
+
 @app.get("/erp/bills/source/by-po-number/{po_number}", response_model=ERPBillSourceOut)
 async def get_erp_bill_source_by_po_number(po_number: str):
     search_value = str(po_number or "").strip()
@@ -3452,38 +3498,22 @@ async def get_erp_bill_source_by_po_number(po_number: str):
     supplier_name = supplier_lookup.get(supplier_id, "")
     store_id = int(purchase_order.get("StoreID", 1) or 1)
 
-    latest_goods_received = await goods_received_collection.find_one(
-        {
-            "$or": [
-                {"PurchaseOrderID": resolved_purchase_order_id},
-                {"WorkSheetID": resolved_purchase_order_id},
-                {"PONumber": {"$regex": f"^{re.escape(resolved_po_number)}$", "$options": "i"}},
-            ]
-        },
-        sort=[("DateCreated", -1), ("ID", -1)],
+    goods_received_source = await get_goods_received_bill_source(
+        resolved_purchase_order_id,
+        resolved_po_number,
     )
-    if latest_goods_received:
-        goods_received_id = int(latest_goods_received.get("ID", 0) or 0)
-        received_entries = await goods_received_entry_collection.find(
-            {"GoodsReceivedID": goods_received_id}
-        ).to_list(10000)
-        amount_due = sum(
-            float(entry.get("QuantityRecieved", entry.get("QuantityReceived", 0)) or 0)
-            * float(entry.get("Price", 0) or 0)
-            * (1 + (float(entry.get("TaxRate", 0) or 0) / 100))
-            for entry in received_entries
-        )
+    if goods_received_source:
         return ERPBillSourceOut(
             po_number=resolved_po_number,
             source="goods_received",
             supplier_id=supplier_id,
             supplier_name=supplier_name,
-            store_id=int(latest_goods_received.get("StoreID", store_id) or store_id),
-            amount_due=amount_due,
-            goods_received_id=goods_received_id,
-            invoice_no=str(latest_goods_received.get("InvoiceNo", "") or ""),
-            delivery_no=str(latest_goods_received.get("DeliveryNo", "") or ""),
-            last_updated=parse_erp_datetime(latest_goods_received.get("LastUpdated")),
+            store_id=int(goods_received_source["store_id"] or store_id),
+            amount_due=float(goods_received_source["amount_due"] or 0),
+            goods_received_id=goods_received_source["goods_received_id"],
+            invoice_no=goods_received_source["invoice_no"],
+            delivery_no=goods_received_source["delivery_no"],
+            last_updated=goods_received_source["last_updated"],
         )
 
     purchase_order_entries = await purchase_order_entries_collection.find(
@@ -3590,31 +3620,25 @@ async def create_erp_purchase_order(payload: ERPPurchaseOrderCreate):
             if entry.item_description and entry.item_description.strip()
             else str(item_doc.get("Description", "") or "")
         )
-        line_price = float(
-            item_doc.get(
-                "Price",
-                entry.price if entry.price is not None else 0,
-            )
-            or 0
-        )
         costed_price = float(
             item_doc.get(
                 "Cost",
                 item_doc.get(
                     "LastCost",
-                    entry.costed_price if entry.costed_price is not None else line_price,
+                    entry.costed_price if entry.costed_price is not None else entry.price,
                 ),
             )
-            or line_price
+            or 0
         )
+        line_price = costed_price
         line_tax_rate = float(
             entry.tax_rate
             if entry.tax_rate is not None
             else (payload.tax_rate or 0)
         )
 
-        if line_price < 0 or costed_price < 0:
-            raise HTTPException(status_code=400, detail="Item price or cost cannot be negative")
+        if costed_price < 0:
+            raise HTTPException(status_code=400, detail="Item cost cannot be negative")
 
         entry_docs.append(
             {
@@ -3837,6 +3861,13 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
                 "Reason": str(entry.reason or "N/A")[:35],
                 "OrderNumber": resolved_po_number,
                 "Price": float(order_entry.get("Price", entry.price or 0) or 0),
+                "CostedPrice": float(
+                    order_entry.get(
+                        "CostedPrice",
+                        order_entry.get("Cost", entry.price or 0),
+                    )
+                    or 0
+                ),
                 "TaxRate": float(order_entry.get("TaxRate", entry.tax_rate or 0) or 0),
                 "InvetoryOfflineID": int(entry.inventory_offline_id or 0),
             }
