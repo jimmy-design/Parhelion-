@@ -17,7 +17,7 @@ module.exports = {
     installerIcon: "icon.ico",
     uninstallerIcon: "icon.ico",
     installerHeaderIcon: "icon.ico",
-    oneClick: true,
+    oneClick: false,
     perMachine: false,
   },
   publish: createGithubPublishConfig("erp"),

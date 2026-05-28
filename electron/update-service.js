@@ -52,7 +52,6 @@ function createInitialState() {
     checkedAt: "",
     releaseDate: "",
     releaseNotes: "",
-    ...getRuntimeUpdateDetails(),
   };
 }
 
@@ -171,26 +170,6 @@ function getBundledUpdaterConfigPath() {
   return path.join(process.resourcesPath, "app-update.yml");
 }
 
-function getRuntimeUpdateDetails() {
-  if (!hasElectronApp()) {
-    return {
-      executablePath: "",
-      resourcesPath: "",
-      updaterConfigPath: "",
-      updaterConfigPresent: false,
-    };
-  }
-
-  const updaterConfigPath = getBundledUpdaterConfigPath();
-
-  return {
-    executablePath: process.execPath || "",
-    resourcesPath: process.resourcesPath || "",
-    updaterConfigPath,
-    updaterConfigPresent: fs.existsSync(updaterConfigPath),
-  };
-}
-
 function isUpdaterConfigured() {
   if (!hasElectronApp() || !app.isPackaged) return false;
   return fs.existsSync(getBundledUpdaterConfigPath());
@@ -227,7 +206,7 @@ function attachUpdaterEvents() {
   updater.channel = currentAppVariant;
   updater.allowDowngrade = false;
   updater.autoDownload = currentAppVariant !== "erp";
-  updater.autoInstallOnAppQuit = false;
+  updater.autoInstallOnAppQuit = currentAppVariant !== "erp";
   updater.allowPrerelease = false;
   updater.disableDifferentialDownload = true;
 

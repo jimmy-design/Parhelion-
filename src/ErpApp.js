@@ -1347,10 +1347,6 @@ const FALLBACK_UPDATE_STATE = {
   checkedAt: "",
   releaseDate: "",
   releaseNotes: "",
-  executablePath: "",
-  resourcesPath: "",
-  updaterConfigPath: "",
-  updaterConfigPresent: false,
 };
 
 const UPDATE_STATUS_LABELS = {
@@ -7612,21 +7608,6 @@ function ErpApp({ currentUser, onLogout }) {
                     {updateTransferSpeed && updateState.status === "downloading" && (
                       <span>{updateTransferSpeed}</span>
                     )}
-                  </div>
-
-                  <div className="erp-update-runtime-box">
-                    <div>
-                      <span>Running from</span>
-                      <strong>{updateState.executablePath || "Unknown executable"}</strong>
-                    </div>
-                    <div>
-                      <span>Update config</span>
-                      <strong>
-                        {updateState.updaterConfigPresent
-                          ? updateState.updaterConfigPath || "Bundled"
-                          : "Not bundled in this copy"}
-                      </strong>
-                    </div>
                   </div>
 
                   {(updateState.status === "downloading" ||

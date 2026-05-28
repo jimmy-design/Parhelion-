@@ -1337,37 +1337,6 @@
   white-space: nowrap;
 }
 
-.erp-update-runtime-box {
-  display: grid;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #dde5f1;
-}
-
-.erp-update-runtime-box div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.erp-update-runtime-box span {
-  font-size: 11px;
-  font-weight: 800;
-  color: #60738e;
-  text-transform: uppercase;
-}
-
-.erp-update-runtime-box strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: #23324a;
-  font-family: Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .erp-update-progress-block {
   padding: 12px 14px;
   border-radius: 16px;

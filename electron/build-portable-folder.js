@@ -29,9 +29,6 @@ function copyUnpackedApp(targetDir) {
 
   fs.rmSync(targetDir, { recursive: true, force: true });
   fs.cpSync(unpackedDir, targetDir, { recursive: true });
-
-  const updaterConfigPath = path.join(targetDir, "resources", "app-update.yml");
-  fs.rmSync(updaterConfigPath, { force: true });
 }
 
 function writeTextFile(filePath, contents) {
@@ -66,7 +63,6 @@ function createReadme() {
       "4. If you want Desktop shortcuts, create shortcuts to 'Launch POS.cmd' and 'Launch ERP.cmd' after copying the folder.",
       "",
       "Important:",
-      "- Portable builds do not auto-update. Install the latest POS/ERP .exe installer to upgrade a machine permanently.",
       "- Keep the full folder structure together.",
       "- Do not move only the .exe files by themselves.",
       "- Each app has its own subfolder because it also needs DLLs and app resources.",
