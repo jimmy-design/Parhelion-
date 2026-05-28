@@ -206,7 +206,7 @@ function attachUpdaterEvents() {
   updater.channel = currentAppVariant;
   updater.allowDowngrade = false;
   updater.autoDownload = currentAppVariant !== "erp";
-  updater.autoInstallOnAppQuit = currentAppVariant !== "erp";
+  updater.autoInstallOnAppQuit = false;
   updater.allowPrerelease = false;
   updater.disableDifferentialDownload = true;
 

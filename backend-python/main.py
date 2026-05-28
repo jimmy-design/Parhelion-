@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from bson import ObjectId
+from pymongo.errors import WriteError
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from datetime import date, datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from database.mongodb import (
     account_collection,
     combined_account_collection,
     account_mapping_collection,
+    account_entry_collection,
     categories_collection,
     configuration_collection,
     purchase_order_collection,
@@ -421,6 +423,31 @@ class ERPAccountMappingUpsert(BaseModel):
 
 class ERPAccountMappingsUpdate(BaseModel):
     mappings: List[ERPAccountMappingUpsert]
+
+
+class ERPBillAccountEntryCreate(BaseModel):
+    invoice_no: str
+    invoice_date: str
+    amount_due: float
+    bill_due_date: str
+    supplier_id: int = 0
+    supplier_name: str = ""
+    account_id: Optional[str] = ""
+    account_code: Optional[str] = ""
+    location_store_id: int = 0
+    location: str = ""
+    lpo_number: str = ""
+    status: str = "Pending"
+
+
+class ERPBillAccountEntryOut(BaseModel):
+    id: int
+    invoice_no: str
+    amount_due: float
+    account_id: Optional[int] = None
+    account_code: str = ""
+    account_name: str = ""
+    last_updated: datetime
 
 
 class ERPPurchaseOrderEntryCreate(BaseModel):
@@ -1800,6 +1827,18 @@ async def find_erp_account(account_id: Optional[str] = "", account_code: Optiona
     return await combined_account_collection.find_one(query)
 
 
+def coerce_optional_int(value) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
 async def map_account_mapping_for_erp(doc: dict) -> ERPAccountMappingOut:
     mapping_key = str(doc.get("MappingKey", "") or "")
     account_doc = await find_erp_account(
@@ -1816,6 +1855,18 @@ async def map_account_mapping_for_erp(doc: dict) -> ERPAccountMappingOut:
         account_type=account.account_type if account else "",
         updated_at=parse_optional_erp_datetime(doc.get("UpdatedAt")),
     )
+
+
+async def get_mapped_erp_account(mapping_key: str) -> Optional[ERPAccountOut]:
+    mapping_doc = await account_mapping_collection.find_one({"MappingKey": mapping_key})
+    if not mapping_doc:
+        return None
+
+    account_doc = await find_erp_account(
+        account_id=str(mapping_doc.get("AccountID", "") or ""),
+        account_code=str(mapping_doc.get("AccountCode", "") or ""),
+    )
+    return map_account_for_erp(account_doc) if account_doc else None
 
 
 def normalize_adjustment_status(value: str) -> str:
@@ -2730,6 +2781,109 @@ async def update_erp_account_mappings(payload: ERPAccountMappingsUpdate):
         )
 
     return await list_erp_account_mappings()
+
+
+@app.post("/erp/account-entry/bills", response_model=ERPBillAccountEntryOut, status_code=201)
+async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
+    invoice_no = payload.invoice_no.strip()
+    supplier_name = payload.supplier_name.strip()
+    amount_due = float(payload.amount_due or 0)
+    invoice_date = parse_optional_erp_datetime(payload.invoice_date)
+    bill_due_date = parse_optional_erp_datetime(payload.bill_due_date)
+
+    if not invoice_no:
+        raise HTTPException(status_code=400, detail="Invoice number is required")
+    if amount_due <= 0:
+        raise HTTPException(status_code=400, detail="Amount due must be greater than zero")
+    if not invoice_date:
+        raise HTTPException(status_code=400, detail="Invoice date is required")
+    if not bill_due_date:
+        raise HTTPException(status_code=400, detail="Bill due date is required")
+
+    existing = await account_entry_collection.find_one(
+        {"InvoiceNo": {"$regex": f"^{re.escape(invoice_no)}$", "$options": "i"}}
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Invoice already exists in account entry")
+
+    latest = await account_entry_collection.find({}, {"ID": 1}).sort("ID", -1).limit(1).to_list(1)
+    next_id = int((latest[0] if latest else {}).get("ID", 0) or 0) + 1
+    payable_account_doc = await find_erp_account(
+        account_id=payload.account_id,
+        account_code=payload.account_code,
+    )
+    if not payable_account_doc:
+        raise HTTPException(status_code=400, detail="Select a valid account for this bill")
+
+    payable_account = map_account_for_erp(payable_account_doc)
+    payable_account_id = coerce_optional_int(payable_account.id)
+    if payable_account_id is None:
+        raise HTTPException(status_code=400, detail="Selected account does not have a numeric account ID")
+    now = datetime.utcnow()
+    description_parts = [f"Supplier bill {invoice_no}"]
+    if supplier_name:
+        description_parts.append(supplier_name)
+    if payload.lpo_number.strip():
+        description_parts.append(f"LPO {payload.lpo_number.strip()}")
+    description = " - ".join(description_parts)[:120]
+    memo = (
+        f"Invoice {invoice_no}; due {bill_due_date.date().isoformat()}; "
+        f"{payload.location.strip() or 'No location'}"
+    )[:200]
+
+    entry_doc = {
+        "ID": next_id,
+        "BranchID": int(payload.location_store_id or 0) or None,
+        "AccountID": payable_account_id,
+        "DoubleAccount": None,
+        "Memo": memo,
+        "Description": description,
+        "BillID": None,
+        "tDate": invoice_date,
+        "Lastupdated": now,
+        "Amount": amount_due,
+        "VendorID": int(payload.supplier_id or 0) or None,
+        "CustomerID": None,
+        "Split": False,
+        "DocID": None,
+        "ReconcilledID": None,
+        "Reconcilled": False,
+        "tType": 1,
+        "StoreID": int(payload.location_store_id or 0) or None,
+        "EntryType": "Supplier Bill",
+        "SourceModule": "Bills Payment",
+        "Reference": invoice_no,
+        "InvoiceNo": invoice_no,
+        "InvoiceDate": invoice_date,
+        "BillDueDate": bill_due_date,
+        "PONumber": payload.lpo_number.strip(),
+        "LPONumber": payload.lpo_number.strip(),
+        "SupplierID": int(payload.supplier_id or 0),
+        "SupplierName": supplier_name,
+        "Location": payload.location.strip(),
+        "AccountCode": payable_account.account_code if payable_account else "",
+        "AccountName": payable_account.account_name if payable_account else "",
+        "Debit": 0.0,
+        "Credit": amount_due,
+        "Currency": "KES",
+        "Status": payload.status.strip() or "Pending",
+        "Posted": False,
+        "CreatedAt": now,
+        "LastUpdated": now,
+    }
+    try:
+        await account_entry_collection.insert_one(entry_doc)
+    except WriteError as error:
+        raise HTTPException(status_code=400, detail=f"Account entry validation failed: {error.details.get('errmsg', str(error))}") from error
+    return ERPBillAccountEntryOut(
+        id=next_id,
+        invoice_no=invoice_no,
+        amount_due=amount_due,
+        account_id=payable_account_id,
+        account_code=entry_doc["AccountCode"],
+        account_name=entry_doc["AccountName"],
+        last_updated=now,
+    )
 
 
 @app.post("/erp/categories", response_model=ERPCategoryOut, status_code=201)

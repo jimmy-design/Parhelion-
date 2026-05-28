@@ -300,6 +300,7 @@ function createEmptyBillForm() {
     billDueDate: "",
     supplierId: "",
     supplierName: "",
+    accountId: "",
     locationStoreId: "",
     lpoReceived: false,
     lpoNumber: "",
@@ -4125,6 +4126,7 @@ function ErpApp({ currentUser, onLogout }) {
       setNewBillForm(createEmptyBillForm());
       setBillFormError("");
       loadSuppliers("");
+      loadAccounts("");
       loadPriceChangeBranches();
       setShowNewBillForm(true);
       return;
@@ -4220,13 +4222,14 @@ function ErpApp({ currentUser, onLogout }) {
     }
   };
 
-  const handleSaveNewBill = (event) => {
+  const handleSaveNewBill = async (event) => {
     event.preventDefault();
 
     const invoiceNo = newBillForm.invoiceNo.trim();
     const invoiceDate = newBillForm.invoiceDate.trim();
     const billDueDate = newBillForm.billDueDate.trim();
     const supplierId = String(newBillForm.supplierId || "").trim();
+    const accountId = String(newBillForm.accountId || "").trim();
     const locationStoreId = String(newBillForm.locationStoreId || "").trim();
     const lpoNumber = newBillForm.lpoNumber.trim();
     const amountDue = Number(String(newBillForm.amountDue || "").replace(/,/g, ""));
@@ -4246,13 +4249,14 @@ function ErpApp({ currentUser, onLogout }) {
       !invoiceNo ||
       !billDueDate ||
       !supplierId ||
+      !accountId ||
       !locationStoreId ||
       !supplier ||
       !location ||
       !Number.isFinite(amountDue) ||
       amountDue <= 0
     ) {
-      const message = "Invoice date, invoice number, amount due, bill due date, supplier, and branch location are required.";
+      const message = "Invoice date, invoice number, amount due, bill due date, supplier, account, and branch location are required.";
       setBillFormError(message);
       pushAlert("warning", message);
       return;
@@ -4265,27 +4269,58 @@ function ErpApp({ currentUser, onLogout }) {
       return;
     }
 
+    const status = newBillForm.lpoReceived ? "LPO Received" : "Pending LPO";
     setSavingBill(true);
-    const savedBill = {
-      id: `bill-${Date.now()}`,
-      invoiceNo,
-      invoiceDate: formatDisplayDateValue(invoiceDate),
-      amountDue: amountDue.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }),
-      billDueDate: formatDisplayDateValue(billDueDate),
-      supplierId,
-      supplier,
-      locationStoreId,
-      location,
-      lpoNumber: newBillForm.lpoReceived ? lpoNumber : "",
-      status: newBillForm.lpoReceived ? "LPO Received" : "Pending LPO",
-    };
+    setBillFormError("");
+    try {
+      const savedEntry = await fetchJsonWithFallback(
+        "/erp/account-entry/bills",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            invoice_no: invoiceNo,
+            invoice_date: invoiceDate,
+            amount_due: amountDue,
+            bill_due_date: billDueDate,
+            supplier_id: Number(supplierId || 0),
+            supplier_name: supplier,
+            account_id: accountId,
+            location_store_id: Number(locationStoreId || 0),
+            location,
+            lpo_number: newBillForm.lpoReceived ? lpoNumber : "",
+            status,
+          }),
+        },
+        "Failed to save bill to account entry"
+      );
+      const savedBill = {
+        id: `bill-${savedEntry.id || Date.now()}`,
+        invoiceNo,
+        invoiceDate: formatDisplayDateValue(invoiceDate),
+        amountDue: amountDue.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }),
+        billDueDate: formatDisplayDateValue(billDueDate),
+        supplierId,
+        supplier,
+        locationStoreId,
+        location,
+        lpoNumber: newBillForm.lpoReceived ? lpoNumber : "",
+        status,
+      };
 
-    setBillsPaymentRecords((prev) => [savedBill, ...prev]);
-    closeNewBillForm();
-    pushAlert("success", `Bill ${invoiceNo} added.`);
+      setBillsPaymentRecords((prev) => [savedBill, ...prev]);
+      closeNewBillForm();
+      pushAlert("success", `Bill ${invoiceNo} saved to account entry.`);
+    } catch (error) {
+      const message = error.message || "Failed to save bill to account entry.";
+      setBillFormError(message);
+      pushAlert("error", message);
+    } finally {
+      setSavingBill(false);
+    }
   };
 
   const closeAccountForm = () => {
@@ -9286,6 +9321,16 @@ function ErpApp({ currentUser, onLogout }) {
                     placeholder={suppliersLoading ? "Loading suppliers..." : "Select supplier"}
                     disabled={suppliersLoading}
                     onChange={(nextValue) => updateNewBillForm("supplierId", String(nextValue))}
+                  />
+                </div>
+                <div className="erp-form-field">
+                  <label>Account</label>
+                  <ErpCustomSelect
+                    value={newBillForm.accountId}
+                    options={accountSelectOptions}
+                    placeholder={accountsLoading ? "Loading accounts..." : "Choose account"}
+                    disabled={accountsLoading || accountSelectOptions.length <= 1}
+                    onChange={(nextValue) => updateNewBillForm("accountId", String(nextValue))}
                   />
                 </div>
                 <div className="erp-form-field">
