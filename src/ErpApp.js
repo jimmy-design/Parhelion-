@@ -1222,6 +1222,206 @@ function buildPurchaseOrderShareText(preview) {
   ].join("\n");
 }
 
+function buildGoodsReceivedGrnHtml(grn, autoPrint = false) {
+  const entries = Array.isArray(grn?.entries) ? grn.entries : [];
+  const rowsHtml = entries.length
+    ? entries
+        .map(
+          (entry, index) => `
+            <tr>
+              <td>${index + 1}</td>
+              <td>
+                <strong>${escapeHtml(entry.item_description || "Item description unavailable")}</strong>
+                <div class="muted">${escapeHtml(entry.item_lookup_code || entry.item_id || "-")}</div>
+              </td>
+              <td class="align-right">${escapeHtml(Number(entry.quantity_received || 0).toLocaleString())}</td>
+              <td class="align-right">${escapeHtml(formatCurrencyValue(entry.costed_price || entry.price || 0))}</td>
+              <td class="align-right">${escapeHtml(`${Number(entry.tax_rate || 0).toLocaleString()}%`)}</td>
+              <td class="align-right">${escapeHtml(formatCurrencyValue(entry.line_total || 0))}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : '<tr><td class="empty-row" colspan="6">No received items were found for this GRN.</td></tr>';
+
+  const autoPrintScript = autoPrint
+    ? `
+      <script>
+        window.addEventListener("load", function () {
+          setTimeout(function () {
+            window.focus();
+            window.print();
+          }, 180);
+        });
+      </script>
+    `
+    : "";
+
+  return `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>${escapeHtml(grn?.grn_number || "GRN")} - ${escapeHtml(grn?.po_number || "LPO")}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            font-family: "Segoe UI", Arial, sans-serif;
+            background: #edf1f6;
+            color: #17243a;
+          }
+          .shell {
+            min-height: 100vh;
+            padding: 28px;
+            display: flex;
+            justify-content: center;
+          }
+          .page {
+            width: min(210mm, 100%);
+            min-height: 297mm;
+            background: #fff;
+            border-radius: 18px;
+            padding: 32px;
+            box-shadow: 0 22px 54px rgba(29, 42, 65, 0.15);
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 22px;
+          }
+          h1 {
+            margin: 0 0 6px;
+            font-size: 30px;
+          }
+          .subtitle {
+            margin: 0;
+            color: #5b6a80;
+          }
+          .chip {
+            border: 1px solid #d9e2ee;
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-weight: 800;
+            color: #233f66;
+            background: #f3f7fc;
+            white-space: nowrap;
+          }
+          .meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 22px;
+          }
+          .box {
+            border: 1px solid #dde5f1;
+            border-radius: 14px;
+            padding: 14px 16px;
+            background: #fbfcff;
+          }
+          .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 5px 0;
+            font-size: 13px;
+          }
+          .row span:first-child { color: #65758c; }
+          .row span:last-child { font-weight: 700; text-align: right; }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th, td {
+            padding: 11px 10px;
+            border-bottom: 1px solid #e3eaf3;
+            font-size: 13px;
+            vertical-align: top;
+          }
+          th {
+            background: #f5f8fc;
+            color: #53667f;
+            text-align: left;
+          }
+          .align-right { text-align: right; white-space: nowrap; }
+          .muted {
+            margin-top: 4px;
+            color: #6c7b8f;
+            font-size: 12px;
+          }
+          .summary {
+            margin-left: auto;
+            margin-top: 18px;
+            width: min(320px, 100%);
+          }
+          .total {
+            border-top: 1px solid #d8e1ed;
+            margin-top: 8px;
+            padding-top: 10px;
+            font-size: 16px;
+            color: #17345c;
+          }
+          .empty-row {
+            text-align: center;
+            color: #6c7b8f;
+            padding: 26px 12px;
+          }
+          @media print {
+            body { background: #fff; }
+            .shell { padding: 0; }
+            .page { box-shadow: none; border-radius: 0; min-height: auto; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="shell">
+          <section class="page">
+            <header class="header">
+              <div>
+                <h1>${escapeHtml(grn?.grn_number || "GRN")}</h1>
+                <p class="subtitle">Goods Received Note for ${escapeHtml(grn?.po_number || "-")}</p>
+              </div>
+              <div class="chip">Goods Received</div>
+            </header>
+            <section class="meta">
+              <div class="box">
+                <div class="row"><span>LPO No</span><span>${escapeHtml(grn?.po_number || "-")}</span></div>
+                <div class="row"><span>Supplier</span><span>${escapeHtml(grn?.supplier_name || "-")}</span></div>
+                <div class="row"><span>Store</span><span>${escapeHtml(grn?.store_id || "-")}</span></div>
+              </div>
+              <div class="box">
+                <div class="row"><span>Received Date</span><span>${escapeHtml(formatDisplayDateValue(grn?.received_date, true))}</span></div>
+                <div class="row"><span>Delivery No</span><span>${escapeHtml(grn?.delivery_no || "-")}</span></div>
+                <div class="row"><span>Invoice No</span><span>${escapeHtml(grn?.invoice_no || "-")}</span></div>
+              </div>
+            </section>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Item</th>
+                  <th class="align-right">Qty Received</th>
+                  <th class="align-right">Cost</th>
+                  <th class="align-right">Tax</th>
+                  <th class="align-right">Line Total</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+            <section class="box summary">
+              <div class="row"><span>Total Quantity</span><span>${escapeHtml(Number(grn?.total_quantity_received || 0).toLocaleString())}</span></div>
+              <div class="row total"><span>Total Amount</span><span>${escapeHtml(formatCurrencyValue(grn?.total_amount || 0))}</span></div>
+            </section>
+          </section>
+        </main>
+        ${autoPrintScript}
+      </body>
+    </html>
+  `;
+}
+
 const SUPPLIER_FLAG_FIELDS = [
   { key: "withhold", label: "Withhold" },
   { key: "grnApproval", label: "GRN Approval" },
@@ -2056,6 +2256,10 @@ function ErpApp({ currentUser, onLogout }) {
   const [receiveGoodsLoading, setReceiveGoodsLoading] = useState(false);
   const [receiveGoodsSaving, setReceiveGoodsSaving] = useState(false);
   const [receiveGoodsError, setReceiveGoodsError] = useState("");
+  const [receiveGoodsGrns, setReceiveGoodsGrns] = useState([]);
+  const [receiveGoodsGrnLoading, setReceiveGoodsGrnLoading] = useState(false);
+  const [receiveGoodsGrnError, setReceiveGoodsGrnError] = useState("");
+  const [selectedReceiveGoodsGrnId, setSelectedReceiveGoodsGrnId] = useState(null);
   const [purchaseOrderLookupValue, setPurchaseOrderLookupValue] = useState("");
   const [purchaseOrderLookupQuantity, setPurchaseOrderLookupQuantity] = useState("1");
   const [purchaseOrderLookupPending, setPurchaseOrderLookupPending] = useState(false);
@@ -2790,6 +2994,13 @@ function ErpApp({ currentUser, onLogout }) {
     receiveGoodsForm.entries.length > 0 &&
     Math.abs(receiveGoodsTotals.quantity - receiveGoodsTotals.orderedQuantity) < 0.0001 &&
     Math.abs(receiveGoodsTotals.invoice - receiveGoodsTotals.orderedInvoice) < 0.0001;
+  const selectedReceiveGoodsGrn = useMemo(
+    () =>
+      receiveGoodsGrns.find((grn) => Number(grn.id) === Number(selectedReceiveGoodsGrnId)) ||
+      receiveGoodsGrns[0] ||
+      null,
+    [receiveGoodsGrns, selectedReceiveGoodsGrnId]
+  );
   const selectedInventoryItemRecord = useMemo(
     () =>
       itemsRecords.find(
@@ -4730,9 +4941,89 @@ function ErpApp({ currentUser, onLogout }) {
     setReceiveGoodsError("");
     setReceiveGoodsLoading(false);
     setReceiveGoodsSaving(false);
+    setReceiveGoodsGrns([]);
+    setReceiveGoodsGrnLoading(false);
+    setReceiveGoodsGrnError("");
+    setSelectedReceiveGoodsGrnId(null);
     setReceiveGoodsPurchaseOrder(null);
     setReceiveGoodsForm(createEmptyReceiveGoodsForm());
     setShowReceiveGoodsForm(false);
+  };
+
+  const loadReceiveGoodsGrns = async (poNumber = receiveGoodsPurchaseOrder?.po_number || receiveGoodsForm.poSearch) => {
+    const searchValue = String(poNumber || "").trim();
+    if (!searchValue) {
+      const message = "Enter or load an LPO number before viewing GRN.";
+      setReceiveGoodsGrnError(message);
+      pushAlert("warning", message);
+      return [];
+    }
+
+    setReceiveGoodsGrnLoading(true);
+    setReceiveGoodsGrnError("");
+    try {
+      const data = await fetchJsonWithFallback(
+        `/erp/goods-received/by-po-number/${encodeURIComponent(searchValue)}`,
+        undefined,
+        "Failed to load GRN"
+      );
+      const grns = Array.isArray(data) ? data : [];
+      setReceiveGoodsGrns(grns);
+      setSelectedReceiveGoodsGrnId((prev) =>
+        grns.some((grn) => Number(grn.id) === Number(prev)) ? prev : grns[0]?.id || null
+      );
+      if (!grns.length) {
+        const message = `No GRN found for ${searchValue}.`;
+        setReceiveGoodsGrnError(message);
+        pushAlert("info", message);
+      }
+      return grns;
+    } catch (error) {
+      const message = error.message || "Failed to load GRN.";
+      setReceiveGoodsGrns([]);
+      setSelectedReceiveGoodsGrnId(null);
+      setReceiveGoodsGrnError(message);
+      pushAlert("error", message);
+      return [];
+    } finally {
+      setReceiveGoodsGrnLoading(false);
+    }
+  };
+
+  const openGoodsReceivedGrnWindow = (grn = selectedReceiveGoodsGrn, { autoPrint = false } = {}) => {
+    if (!grn) {
+      pushAlert("warning", "Load a GRN before opening it.");
+      return;
+    }
+
+    const grnWindow = window.open("", "_blank", "width=1120,height=860");
+    if (!grnWindow) {
+      pushAlert("warning", "Allow pop-ups to open the GRN preview window.");
+      return;
+    }
+
+    grnWindow.document.open();
+    grnWindow.document.write(buildGoodsReceivedGrnHtml(grn, autoPrint));
+    grnWindow.document.close();
+    grnWindow.focus();
+  };
+
+  const exportGoodsReceivedGrn = (grn = selectedReceiveGoodsGrn) => {
+    if (!grn) {
+      pushAlert("warning", "Load a GRN before exporting it.");
+      return;
+    }
+
+    const blob = new Blob([buildGoodsReceivedGrnHtml(grn)], { type: "text/html;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeName = String(grn.grn_number || "GRN").replace(/[^a-z0-9_-]+/gi, "_");
+    link.href = url;
+    link.download = `${safeName}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const loadReceiveGoodsPurchaseOrder = async (poNumber = receiveGoodsForm.poSearch) => {
@@ -4753,10 +5044,13 @@ function ErpApp({ currentUser, onLogout }) {
       );
       setReceiveGoodsPurchaseOrder(purchaseOrder);
       setReceiveGoodsForm(mapPurchaseOrderToReceiveGoodsForm(purchaseOrder));
+      void loadReceiveGoodsGrns(purchaseOrder.po_number || searchValue);
       return purchaseOrder;
     } catch (error) {
       const message = error.message || "Purchase order was not found.";
       setReceiveGoodsPurchaseOrder(null);
+      setReceiveGoodsGrns([]);
+      setSelectedReceiveGoodsGrnId(null);
       setReceiveGoodsError(message);
       pushAlert("error", message);
       return null;
@@ -4775,8 +5069,11 @@ function ErpApp({ currentUser, onLogout }) {
     if (purchaseOrder?.po_number) {
       setReceiveGoodsPurchaseOrder(purchaseOrder);
       setReceiveGoodsForm(mapPurchaseOrderToReceiveGoodsForm(purchaseOrder));
+      void loadReceiveGoodsGrns(purchaseOrder.po_number);
     } else {
       setReceiveGoodsPurchaseOrder(null);
+      setReceiveGoodsGrns([]);
+      setSelectedReceiveGoodsGrnId(null);
       setReceiveGoodsForm(createEmptyReceiveGoodsForm());
     }
   };
@@ -4855,7 +5152,10 @@ function ErpApp({ currentUser, onLogout }) {
         "Failed to save received goods"
       );
 
-      pushAlert("success", `Goods received ${saved.id} saved for ${saved.po_number}.`);
+      pushAlert(
+        "success",
+        `Goods received ${saved.grn_number || saved.id} saved for ${saved.po_number}.`
+      );
       closeReceiveGoodsForm();
       await loadPurchaseOrders(searchTerm);
     } catch (error) {
@@ -8861,6 +9161,18 @@ function ErpApp({ currentUser, onLogout }) {
                           {receiveGoodsLoading ? "Searching..." : "Load PO"}
                         </button>
                       </div>
+                      <div className="erp-po-quick-add-action">
+                        <button
+                          type="button"
+                          className="erp-mini-btn erp-po-add-btn"
+                          onClick={() => {
+                            void loadReceiveGoodsGrns();
+                          }}
+                          disabled={receiveGoodsGrnLoading}
+                        >
+                          {receiveGoodsGrnLoading ? "Loading..." : "View GRN"}
+                        </button>
+                      </div>
                     </div>
                   </section>
 
@@ -8983,6 +9295,122 @@ function ErpApp({ currentUser, onLogout }) {
                     </div>
 
                     {receiveGoodsError && <div className="erp-po-inline-error">{receiveGoodsError}</div>}
+                  </section>
+
+                  <section className="erp-supplier-section erp-supplier-section-span-2 erp-grn-section">
+                    <div className="erp-po-entries-toolbar">
+                      <div>
+                        <h4 className="erp-supplier-section-title">GRN - Goods Received</h4>
+                      </div>
+                      <div className="erp-po-toolbar-actions">
+                        <button
+                          type="button"
+                          className="erp-mini-btn"
+                          onClick={() => openGoodsReceivedGrnWindow(selectedReceiveGoodsGrn)}
+                          disabled={!selectedReceiveGoodsGrn}
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          className="erp-mini-btn"
+                          onClick={() => openGoodsReceivedGrnWindow(selectedReceiveGoodsGrn, { autoPrint: true })}
+                          disabled={!selectedReceiveGoodsGrn}
+                        >
+                          Print
+                        </button>
+                        <button
+                          type="button"
+                          className="erp-mini-btn"
+                          onClick={() => exportGoodsReceivedGrn(selectedReceiveGoodsGrn)}
+                          disabled={!selectedReceiveGoodsGrn}
+                        >
+                          Export
+                        </button>
+                      </div>
+                    </div>
+
+                    {receiveGoodsGrnError && (
+                      <div className="erp-po-inline-error">{receiveGoodsGrnError}</div>
+                    )}
+
+                    {receiveGoodsGrns.length ? (
+                      <div className="erp-grn-list">
+                        {receiveGoodsGrns.map((grn) => {
+                          const isSelected = Number(selectedReceiveGoodsGrnId) === Number(grn.id);
+                          return (
+                            <button
+                              type="button"
+                              key={grn.id}
+                              className={`erp-grn-card ${isSelected ? "is-selected" : ""}`}
+                              onClick={() => setSelectedReceiveGoodsGrnId(grn.id)}
+                            >
+                              <span>
+                                <strong>{grn.grn_number}</strong>
+                                <small>
+                                  {formatDisplayDateValue(grn.received_date)} / Invoice {grn.invoice_no || "-"}
+                                </small>
+                              </span>
+                              <span>
+                                <strong>{Number(grn.total_quantity_received || 0).toLocaleString()}</strong>
+                                <small>{formatCurrencyValue(grn.total_amount || 0)}</small>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="erp-po-table-empty">
+                        {receiveGoodsGrnLoading
+                          ? "Loading GRN records..."
+                          : "Click View GRN to show goods received for this LPO."}
+                      </div>
+                    )}
+
+                    {selectedReceiveGoodsGrn && (
+                      <div className="erp-po-table-wrap erp-grn-table-wrap">
+                        <table className="erp-po-table erp-receive-goods-table">
+                          <thead>
+                            <tr>
+                              <th>Item Code</th>
+                              <th>Description</th>
+                              <th>Qty Received</th>
+                              <th>Cost</th>
+                              <th>Tax %</th>
+                              <th>Line Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedReceiveGoodsGrn.entries?.length ? (
+                              selectedReceiveGoodsGrn.entries.map((entry) => (
+                                <tr key={entry.id}>
+                                  <td className="erp-po-code-cell">{entry.item_lookup_code || entry.item_id || "-"}</td>
+                                  <td className="erp-po-description-cell">{entry.item_description || "-"}</td>
+                                  <td className="erp-po-money-cell">
+                                    {Number(entry.quantity_received || 0).toLocaleString()}
+                                  </td>
+                                  <td className="erp-po-money-cell">
+                                    {Number(entry.costed_price || entry.price || 0).toLocaleString()}
+                                  </td>
+                                  <td className="erp-po-tax-cell">
+                                    {Number(entry.tax_rate || 0).toLocaleString()}%
+                                  </td>
+                                  <td className="erp-po-line-total-cell">
+                                    {formatCurrencyValue(entry.line_total || 0)}
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td className="erp-po-table-empty" colSpan="6">
+                                  No item lines were found for this GRN.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </section>
                 </div>
 

@@ -600,6 +600,7 @@ class ERPGoodsReceivedCreate(BaseModel):
 
 class ERPGoodsReceivedOut(BaseModel):
     id: int
+    grn_number: str = ""
     purchase_order_id: int
     po_number: str
     delivery_no: str
@@ -607,6 +608,39 @@ class ERPGoodsReceivedOut(BaseModel):
     entries_count: int
     total_quantity_received: float
     last_updated: datetime
+
+
+class ERPGoodsReceivedEntryOut(BaseModel):
+    id: int
+    item_id: int
+    item_lookup_code: str = ""
+    item_description: str = ""
+    quantity_received: float = 0
+    quantity_on_hand: float = 0
+    order_number: str = ""
+    price: float = 0
+    costed_price: float = 0
+    tax_rate: float = 0
+    line_total: float = 0
+    last_updated: datetime
+
+
+class ERPGrnOut(BaseModel):
+    id: int
+    grn_number: str
+    purchase_order_id: int
+    po_number: str
+    supplier_id: int = 0
+    supplier_name: str = ""
+    store_id: int = 0
+    delivery_no: str = ""
+    invoice_no: str = ""
+    received_date: datetime
+    entries_count: int
+    total_quantity_received: float
+    total_amount: float
+    last_updated: datetime
+    entries: List[ERPGoodsReceivedEntryOut] = []
 
 
 class ERPBillSourceOut(BaseModel):
@@ -1912,6 +1946,78 @@ def map_bill_payment_for_erp(doc: dict) -> ERPBillPaymentOut:
         last_updated=parse_erp_datetime(
             doc.get("LastUpdated", doc.get("Lastupdated", doc.get("CreatedAt")))
         ),
+    )
+
+
+def build_grn_number(goods_received_id: int) -> str:
+    return f"GRN-{int(goods_received_id or 0):06d}"
+
+
+async def map_goods_received_for_erp(doc: dict, entries: List[dict]) -> ERPGrnOut:
+    goods_received_id = int(doc.get("ID", 0) or 0)
+    purchase_order_id = int(doc.get("PurchaseOrderID", doc.get("WorkSheetID", 0)) or 0)
+    po_number = str(doc.get("PONumber", "") or "")
+    supplier_id = int(doc.get("SupplierID", 0) or 0)
+    supplier_lookup = await build_supplier_name_lookup([supplier_id]) if supplier_id else {}
+    supplier_name = supplier_lookup.get(supplier_id, "")
+
+    po_entries = await purchase_order_entries_collection.find(
+        {"PurchaseOrderID": purchase_order_id}
+    ).to_list(10000)
+    po_entry_by_item_id = {
+        int(entry.get("ItemID", 0) or 0): entry
+        for entry in po_entries
+        if int(entry.get("ItemID", 0) or 0) > 0
+    }
+
+    mapped_entries: List[ERPGoodsReceivedEntryOut] = []
+    total_quantity = 0.0
+    total_amount = 0.0
+    for entry in entries:
+        item_id = int(entry.get("ItemID", 0) or 0)
+        po_entry = po_entry_by_item_id.get(item_id, {})
+        quantity_received = float(entry.get("QuantityRecieved", entry.get("QuantityReceived", 0)) or 0)
+        costed_price = float(entry.get("CostedPrice", entry.get("Price", 0)) or 0)
+        tax_rate = float(entry.get("TaxRate", 0) or 0)
+        line_total = quantity_received * costed_price * (1 + (tax_rate / 100))
+        total_quantity += quantity_received
+        total_amount += line_total
+
+        mapped_entries.append(
+            ERPGoodsReceivedEntryOut(
+                id=int(entry.get("ID", 0) or 0),
+                item_id=item_id,
+                item_lookup_code=str(po_entry.get("ItemLookupCode", "") or ""),
+                item_description=str(
+                    entry.get("ItemDescription", po_entry.get("ItemDescription", "")) or ""
+                ),
+                quantity_received=quantity_received,
+                quantity_on_hand=float(entry.get("QuantityOnHand", 0) or 0),
+                order_number=str(entry.get("OrderNumber", po_number) or po_number),
+                price=float(entry.get("Price", 0) or 0),
+                costed_price=costed_price,
+                tax_rate=tax_rate,
+                line_total=line_total,
+                last_updated=parse_erp_datetime(entry.get("LastUpdated")),
+            )
+        )
+
+    return ERPGrnOut(
+        id=goods_received_id,
+        grn_number=str(doc.get("GRNNumber", "") or build_grn_number(goods_received_id)),
+        purchase_order_id=purchase_order_id,
+        po_number=po_number,
+        supplier_id=supplier_id,
+        supplier_name=supplier_name,
+        store_id=int(doc.get("StoreID", 0) or 0),
+        delivery_no=str(doc.get("DeliveryNo", "") or ""),
+        invoice_no=str(doc.get("InvoiceNo", "") or ""),
+        received_date=parse_erp_datetime(doc.get("DateCreated", doc.get("LastUpdated"))),
+        entries_count=len(mapped_entries),
+        total_quantity_received=total_quantity,
+        total_amount=total_amount,
+        last_updated=parse_erp_datetime(doc.get("LastUpdated")),
+        entries=mapped_entries,
     )
 
 
@@ -3850,6 +3956,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
         if last_goods_received
         else 1
     )
+    grn_number = build_grn_number(next_goods_received_id)
 
     last_entry = await goods_received_entry_collection.find_one(
         {"ID": {"$type": "number"}},
@@ -4008,6 +4115,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
     total_quantity_received = sum(float(entry["QuantityRecieved"] or 0) for entry in entry_docs)
     goods_received_doc = {
         "ID": next_goods_received_id,
+        "GRNNumber": grn_number,
         "PayRef": int(purchase_order.get("PayRef", 0) or 0),
         "PurchaseOrderID": resolved_purchase_order_id,
         "LastUpdated": now,
@@ -4081,6 +4189,7 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
 
     return ERPGoodsReceivedOut(
         id=next_goods_received_id,
+        grn_number=grn_number,
         purchase_order_id=resolved_purchase_order_id,
         po_number=resolved_po_number,
         delivery_no=str(payload.delivery_no or "").strip(),
@@ -4089,6 +4198,42 @@ async def create_erp_goods_received(payload: ERPGoodsReceivedCreate):
         total_quantity_received=total_quantity_received,
         last_updated=now,
     )
+
+
+@app.get("/erp/goods-received/by-po-number/{po_number}", response_model=List[ERPGrnOut])
+async def list_erp_goods_received_by_po_number(po_number: str):
+    search_value = str(po_number or "").strip()
+    if not search_value:
+        raise HTTPException(status_code=400, detail="PO number is required")
+
+    goods_received_docs = await goods_received_collection.find(
+        {
+            "$or": [
+                {"PONumber": {"$regex": f"^{re.escape(search_value)}$", "$options": "i"}},
+                {"OrderNumber": {"$regex": f"^{re.escape(search_value)}$", "$options": "i"}},
+            ]
+        }
+    ).sort("DateCreated", -1).to_list(10000)
+    goods_received_ids = [
+        int(doc.get("ID", 0) or 0)
+        for doc in goods_received_docs
+        if int(doc.get("ID", 0) or 0) > 0
+    ]
+    entries = await goods_received_entry_collection.find(
+        {"GoodsReceivedID": {"$in": goods_received_ids}}
+    ).to_list(10000) if goods_received_ids else []
+    entries_by_goods_received_id: Dict[int, List[dict]] = {}
+    for entry in entries:
+        entry_goods_received_id = int(entry.get("GoodsReceivedID", 0) or 0)
+        entries_by_goods_received_id.setdefault(entry_goods_received_id, []).append(entry)
+
+    return [
+        await map_goods_received_for_erp(
+            doc,
+            entries_by_goods_received_id.get(int(doc.get("ID", 0) or 0), []),
+        )
+        for doc in goods_received_docs
+    ]
 
 
 @app.get("/erp/price-changes", response_model=List[ERPPriceChangeOut])

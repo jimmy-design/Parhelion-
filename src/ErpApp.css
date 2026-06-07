@@ -3771,8 +3771,8 @@
 }
 
 .erp-receive-goods-scroll {
-  grid-template-rows: auto auto minmax(0, 1fr);
-  overflow: hidden;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: auto;
 }
 
 .erp-receive-goods-modal-card {
@@ -3782,8 +3782,72 @@
 }
 
 .erp-receive-goods-search {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
+}
+
+.erp-grn-section {
+  min-height: 0;
+}
+
+.erp-grn-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.erp-grn-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(205, 216, 232, 0.92);
+  border-radius: 8px;
+  background: #f9fbff;
+  padding: 9px 11px;
+  color: #203a63;
+  text-align: left;
+  cursor: pointer;
+}
+
+.erp-grn-card:hover,
+.erp-grn-card.is-selected {
+  border-color: rgba(50, 105, 180, 0.42);
+  background: #eef5ff;
+}
+
+.erp-grn-card span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.erp-grn-card span:last-child {
+  text-align: right;
+}
+
+.erp-grn-card strong,
+.erp-grn-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-grn-card strong {
+  font-size: 12px;
+}
+
+.erp-grn-card small {
+  color: #637795;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.erp-grn-table-wrap {
+  max-height: 260px;
+  overflow: auto;
 }
 
 .erp-receive-goods-details {
