@@ -38,11 +38,15 @@ from database.mongodb import (
     goods_received_entry_collection,
     price_change_collection,
     adjustment_collection,
+    fusion_bill_collection,
+    fusion_bill_entry_collection,
     branch_collection,
     BRANCH_COLLECTION_CANDIDATES,
     ensure_account_mapping_collection_exists,
     ensure_combined_accounts_collection_exists,
     ensure_collection_exists,
+    ensure_fusion_bill_collection_exists,
+    ensure_fusion_bill_entry_collection_exists,
     ensure_goods_received_collection_exists,
     ensure_goods_received_entry_collection_exists,
     ensure_register_collection_exists,
@@ -74,6 +78,8 @@ async def ensure_required_mongo_collections():
     await ensure_goods_received_collection_exists()
     await ensure_goods_received_entry_collection_exists()
     await ensure_register_collection_exists()
+    await ensure_fusion_bill_collection_exists()
+    await ensure_fusion_bill_entry_collection_exists()
 
 
 class ERPItemCreate(BaseModel):
@@ -444,6 +450,24 @@ class ERPBillAccountEntryOut(BaseModel):
     id: int
     invoice_no: str
     amount_due: float
+    account_id: Optional[int] = None
+    account_code: str = ""
+    account_name: str = ""
+    last_updated: datetime
+
+
+class ERPBillPaymentOut(BaseModel):
+    id: int
+    invoice_no: str
+    invoice_date: datetime
+    amount_due: float
+    bill_due_date: datetime
+    supplier_id: int = 0
+    supplier_name: str = ""
+    location_store_id: int = 0
+    location: str = ""
+    lpo_number: str = ""
+    status: str = "Pending"
     account_id: Optional[int] = None
     account_code: str = ""
     account_name: str = ""
@@ -1869,6 +1893,28 @@ async def get_mapped_erp_account(mapping_key: str) -> Optional[ERPAccountOut]:
     return map_account_for_erp(account_doc) if account_doc else None
 
 
+def map_bill_payment_for_erp(doc: dict) -> ERPBillPaymentOut:
+    return ERPBillPaymentOut(
+        id=int(doc.get("ID", 0) or 0),
+        invoice_no=str(doc.get("RefNo", "") or ""),
+        invoice_date=parse_erp_datetime(doc.get("tdate")),
+        amount_due=float(doc.get("AmountToPay", doc.get("Balance", doc.get("OriginalAmount", 0))) or 0),
+        bill_due_date=parse_erp_datetime(doc.get("DueDate")),
+        supplier_id=int(doc.get("VendorID", 0) or 0),
+        supplier_name=str(doc.get("SupplierName", "") or ""),
+        location_store_id=int(doc.get("StoreID", 0) or 0),
+        location=str(doc.get("Location", "") or ""),
+        lpo_number=str(doc.get("PO", "") or ""),
+        status=str(doc.get("Status", "") or "Pending"),
+        account_id=coerce_optional_int(doc.get("CostingBillID")),
+        account_code=str(doc.get("AccountCode", "") or ""),
+        account_name=str(doc.get("AccountName", "") or ""),
+        last_updated=parse_erp_datetime(
+            doc.get("LastUpdated", doc.get("Lastupdated", doc.get("CreatedAt")))
+        ),
+    )
+
+
 def normalize_adjustment_status(value: str) -> str:
     normalized = str(value or "").strip().title()
     return normalized if normalized in ADJUSTMENT_STATUSES else "Pending"
@@ -2783,6 +2829,27 @@ async def update_erp_account_mappings(payload: ERPAccountMappingsUpdate):
     return await list_erp_account_mappings()
 
 
+@app.get("/erp/account-entry/bills", response_model=List[ERPBillPaymentOut])
+async def list_erp_bill_account_entries(search: str = Query("", max_length=100)):
+    query: Dict[str, Any] = {}
+    search_value = str(search or "").strip()
+    if search_value:
+        pattern = {"$regex": re.escape(search_value), "$options": "i"}
+        query = {
+            "$or": [
+                {"RefNo": pattern},
+                {"CUInv": pattern},
+                {"SupplierName": pattern},
+                {"Location": pattern},
+                {"PO": pattern},
+                {"Status": pattern},
+            ]
+        }
+
+    bill_docs = await fusion_bill_collection.find(query).sort("LastUpdated", -1).to_list(10000)
+    return [map_bill_payment_for_erp(doc) for doc in bill_docs]
+
+
 @app.post("/erp/account-entry/bills", response_model=ERPBillAccountEntryOut, status_code=201)
 async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
     invoice_no = payload.invoice_no.strip()
@@ -2800,14 +2867,16 @@ async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
     if not bill_due_date:
         raise HTTPException(status_code=400, detail="Bill due date is required")
 
-    existing = await account_entry_collection.find_one(
-        {"InvoiceNo": {"$regex": f"^{re.escape(invoice_no)}$", "$options": "i"}}
+    existing = await fusion_bill_collection.find_one(
+        {"RefNo": {"$regex": f"^{re.escape(invoice_no)}$", "$options": "i"}}
     )
     if existing:
-        raise HTTPException(status_code=409, detail="Invoice already exists in account entry")
+        raise HTTPException(status_code=409, detail="Invoice already exists in bills")
 
-    latest = await account_entry_collection.find({}, {"ID": 1}).sort("ID", -1).limit(1).to_list(1)
-    next_id = int((latest[0] if latest else {}).get("ID", 0) or 0) + 1
+    latest_bill = await fusion_bill_collection.find({}, {"ID": 1}).sort("ID", -1).limit(1).to_list(1)
+    next_bill_id = int((latest_bill[0] if latest_bill else {}).get("ID", 0) or 0) + 1
+    latest_bill_entry = await fusion_bill_entry_collection.find({}, {"ID": 1}).sort("ID", -1).limit(1).to_list(1)
+    next_bill_entry_id = int((latest_bill_entry[0] if latest_bill_entry else {}).get("ID", 0) or 0) + 1
     payable_account_doc = await find_erp_account(
         account_id=payload.account_id,
         account_code=payload.account_code,
@@ -2829,59 +2898,69 @@ async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
     memo = (
         f"Invoice {invoice_no}; due {bill_due_date.date().isoformat()}; "
         f"{payload.location.strip() or 'No location'}"
-    )[:200]
+    )[:100]
+    lpo_number = payload.lpo_number.strip()
+    store_id = int(payload.location_store_id or 0)
+    supplier_id = int(payload.supplier_id or 0)
 
-    entry_doc = {
-        "ID": next_id,
-        "BranchID": int(payload.location_store_id or 0) or None,
-        "AccountID": payable_account_id,
-        "DoubleAccount": None,
+    bill_doc = {
+        "ID": next_bill_id,
+        "RefNo": invoice_no,
+        "CUInv": invoice_no[:30],
         "Memo": memo,
-        "Description": description,
-        "BillID": None,
-        "tDate": invoice_date,
+        "VendorID": supplier_id,
+        "OriginalAmount": amount_due,
+        "tdate": invoice_date,
+        "DueDate": bill_due_date,
         "Lastupdated": now,
-        "Amount": amount_due,
-        "VendorID": int(payload.supplier_id or 0) or None,
-        "CustomerID": None,
-        "Split": False,
-        "DocID": None,
-        "ReconcilledID": None,
-        "Reconcilled": False,
-        "tType": 1,
-        "StoreID": int(payload.location_store_id or 0) or None,
-        "EntryType": "Supplier Bill",
-        "SourceModule": "Bills Payment",
-        "Reference": invoice_no,
-        "InvoiceNo": invoice_no,
-        "InvoiceDate": invoice_date,
-        "BillDueDate": bill_due_date,
-        "PONumber": payload.lpo_number.strip(),
-        "LPONumber": payload.lpo_number.strip(),
-        "SupplierID": int(payload.supplier_id or 0),
+        "Tax": 0.0,
+        "WithheldTax": 0.0,
+        "AmountToPay": amount_due,
+        "Balance": amount_due,
+        "UserID": 0,
+        "CostingBillID": payable_account_id,
+        "StoreID": store_id,
+        "Credits": 0.0,
+        "RemitID": 0,
+        "PO": lpo_number[:20] or None,
+        "GRN": None,
+        "tType": 0,
         "SupplierName": supplier_name,
         "Location": payload.location.strip(),
         "AccountCode": payable_account.account_code if payable_account else "",
         "AccountName": payable_account.account_name if payable_account else "",
-        "Debit": 0.0,
-        "Credit": amount_due,
-        "Currency": "KES",
         "Status": payload.status.strip() or "Pending",
-        "Posted": False,
         "CreatedAt": now,
         "LastUpdated": now,
     }
+
+    bill_entry_doc = {
+        "ID": next_bill_entry_id,
+        "BillID": next_bill_id,
+        "RefNo": invoice_no,
+        "Memo": description[:100],
+        "tType": "DEBIT",
+        "Amount": amount_due,
+        "tDate": invoice_date,
+        "PaymentID": 0,
+        "userID": 0,
+        "Lastupdated": now,
+    }
+
     try:
-        await account_entry_collection.insert_one(entry_doc)
+        await fusion_bill_collection.insert_one(bill_doc)
+        await fusion_bill_entry_collection.insert_one(bill_entry_doc)
     except WriteError as error:
-        raise HTTPException(status_code=400, detail=f"Account entry validation failed: {error.details.get('errmsg', str(error))}") from error
+        await fusion_bill_collection.delete_one({"ID": next_bill_id})
+        await fusion_bill_entry_collection.delete_one({"ID": next_bill_entry_id})
+        raise HTTPException(status_code=400, detail=f"Bill validation failed: {error.details.get('errmsg', str(error))}") from error
     return ERPBillAccountEntryOut(
-        id=next_id,
+        id=next_bill_id,
         invoice_no=invoice_no,
         amount_due=amount_due,
         account_id=payable_account_id,
-        account_code=entry_doc["AccountCode"],
-        account_name=entry_doc["AccountName"],
+        account_code=bill_doc["AccountCode"],
+        account_name=bill_doc["AccountName"],
         last_updated=now,
     )
 

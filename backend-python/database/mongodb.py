@@ -150,6 +150,8 @@ goods_received_entry_collection = db["goodsreceivedentry"]
 price_change_collection = db["pricechanges"]
 adjustment_collection = db["adjustments"]
 register_collection = db["register"]
+fusion_bill_collection = db["fusion_bill"]
+fusion_bill_entry_collection = db["fusion_bill_entry"]
 branch_collection = branch_db[MONGO_BRANCH_COLLECTION]
 
 
@@ -217,3 +219,29 @@ async def ensure_goods_received_entry_collection_exists(database=None):
     await collection.create_index([("ItemID", 1)], name="ItemID")
     await collection.create_index([("OrderNumber", 1)], name="OrderNumber")
     await collection.create_index([("LastUpdated", 1)], name="LastUpdated")
+
+
+async def ensure_fusion_bill_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("fusion_bill", target_db)
+    collection = target_db["fusion_bill"]
+    await collection.create_index([("ID", 1)], unique=True, name="fusion_bill_primary_key")
+    await collection.create_index([("VendorID", 1)], name="billIndex0")
+    await collection.create_index([("RefNo", 1)], name="RefNo")
+    await collection.create_index([("UserID", 1)], name="UserID")
+    await collection.create_index([("StoreID", 1)], name="StoreID")
+    await collection.create_index([("RemitID", 1)], name="RemitID")
+    await collection.create_index([("tdate", 1)], name="tdate")
+    await collection.create_index([("DueDate", 1)], name="DueDate")
+
+
+async def ensure_fusion_bill_entry_collection_exists(database=None):
+    target_db = database if database is not None else db
+    await ensure_collection_exists("fusion_bill_entry", target_db)
+    collection = target_db["fusion_bill_entry"]
+    await collection.create_index([("ID", 1)], unique=True, name="fusion_bill_entry_primary_key")
+    await collection.create_index([("BillID", 1)], name="entryIndex1")
+    await collection.create_index([("RefNo", 1)], name="RefNo")
+    await collection.create_index([("PaymentID", 1)], name="PaymentID")
+    await collection.create_index([("userID", 1)], name="userID")
+    await collection.create_index([("tDate", 1)], name="tDate")

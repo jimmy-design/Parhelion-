@@ -1280,6 +1280,26 @@ function formatDisplayDateValue(value, includeTime = false) {
   return includeTime ? parsed.toLocaleString() : parsed.toLocaleDateString();
 }
 
+function mapBillPaymentRecord(bill) {
+  const amountDue = Number(bill?.amount_due || 0);
+  return {
+    id: `bill-${bill?.id || bill?.invoice_no || Math.random().toString(36).slice(2, 8)}`,
+    invoiceNo: String(bill?.invoice_no || ""),
+    invoiceDate: formatDisplayDateValue(bill?.invoice_date),
+    amountDue: amountDue.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+    billDueDate: formatDisplayDateValue(bill?.bill_due_date),
+    supplierId: String(bill?.supplier_id || ""),
+    supplier: String(bill?.supplier_name || ""),
+    locationStoreId: String(bill?.location_store_id || ""),
+    location: String(bill?.location || ""),
+    lpoNumber: String(bill?.lpo_number || ""),
+    status: String(bill?.status || "Pending"),
+  };
+}
+
 function mapSupplierToForm(supplier) {
   return {
     ...EMPTY_SUPPLIER_FORM,
@@ -1989,47 +2009,9 @@ function ErpApp({ currentUser, onLogout }) {
   const [billFormError, setBillFormError] = useState("");
   const [savingBill, setSavingBill] = useState(false);
   const [billSourceLookupLoading, setBillSourceLookupLoading] = useState(false);
-  const [billsPaymentRecords, setBillsPaymentRecords] = useState(() => [
-    {
-      id: "bill-24018",
-      invoiceNo: "BILL-24018",
-      invoiceDate: "03 Apr 2026",
-      amountDue: "86,400.00",
-      billDueDate: "03 Apr 2026",
-      supplierId: "11",
-      supplier: "FoamTech Ltd",
-      locationStoreId: "1",
-      location: "Warehouse A",
-      lpoNumber: "LPO-24018",
-      status: "Pending",
-    },
-    {
-      id: "bill-24019",
-      invoiceNo: "BILL-24019",
-      invoiceDate: "05 Apr 2026",
-      amountDue: "42,750.00",
-      billDueDate: "05 Apr 2026",
-      supplierId: "12",
-      supplier: "SoftLine Fabrics",
-      locationStoreId: "2",
-      location: "Thika Branch",
-      lpoNumber: "",
-      status: "Scheduled",
-    },
-    {
-      id: "bill-24020",
-      invoiceNo: "BILL-24020",
-      invoiceDate: "08 Apr 2026",
-      amountDue: "118,900.00",
-      billDueDate: "08 Apr 2026",
-      supplierId: "13",
-      supplier: "SpringCore Metals",
-      locationStoreId: "1",
-      location: "Warehouse A",
-      lpoNumber: "LPO-24020",
-      status: "Approved",
-    },
-  ]);
+  const [billsPaymentRecords, setBillsPaymentRecords] = useState([]);
+  const [billsPaymentLoading, setBillsPaymentLoading] = useState(false);
+  const [billsPaymentError, setBillsPaymentError] = useState("");
   const [purchaseOrdersRecords, setPurchaseOrdersRecords] = useState([]);
   const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
   const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
@@ -4160,6 +4142,10 @@ function ErpApp({ currentUser, onLogout }) {
         loadAccountMappings();
         return;
       }
+      if (selectedFinanceTab.id === "bills-payment") {
+        loadBillsPayment(searchTerm);
+        return;
+      }
       pushAlert("success", `${selectedFinanceTab.label} refreshed.`);
       return;
     }
@@ -4315,6 +4301,7 @@ function ErpApp({ currentUser, onLogout }) {
 
       setBillsPaymentRecords((prev) => [savedBill, ...prev]);
       closeNewBillForm();
+      loadBillsPayment(searchTerm);
       pushAlert("success", `Bill ${invoiceNo} saved to account entry.`);
     } catch (error) {
       const message = error.message || "Failed to save bill to account entry.";
@@ -5382,6 +5369,29 @@ function ErpApp({ currentUser, onLogout }) {
     }
   };
 
+  const loadBillsPayment = async (search = "") => {
+    setBillsPaymentLoading(true);
+    setBillsPaymentError("");
+    try {
+      const query = search.trim()
+        ? `?search=${encodeURIComponent(search.trim())}`
+        : "";
+      const data = await fetchJsonWithFallback(
+        `/erp/account-entry/bills${query}`,
+        undefined,
+        "Failed to load bills"
+      );
+      setBillsPaymentRecords(Array.isArray(data) ? data.map(mapBillPaymentRecord) : []);
+    } catch (error) {
+      const message = error.message || "Failed to load bills";
+      setBillsPaymentError(message);
+      pushAlert("error", message);
+      setBillsPaymentRecords([]);
+    } finally {
+      setBillsPaymentLoading(false);
+    }
+  };
+
   const loadAccountTypes = async () => {
     setAccountTypesLoading(true);
     try {
@@ -6365,6 +6375,16 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isChartOfAccountsView, searchTerm]);
 
   useEffect(() => {
+    if (!isBillsPaymentView) return;
+
+    const timer = setTimeout(() => {
+      loadBillsPayment(searchTerm);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [isBillsPaymentView, searchTerm]);
+
+  useEffect(() => {
     if (!isFinanceWorkspace) return;
     if (accountTypesLoaded || accountTypesLoading) return;
     loadAccountTypes();
@@ -7025,6 +7045,10 @@ function ErpApp({ currentUser, onLogout }) {
                 {isCategoriesView && categoriesError && <p className="erp-table-status erp-table-status-error">{categoriesError}</p>}
                 {isChartOfAccountsView && accountsLoading && <p className="erp-table-status">Loading accounts...</p>}
                 {isChartOfAccountsView && accountsError && <p className="erp-table-status erp-table-status-error">{accountsError}</p>}
+                {isBillsPaymentView && billsPaymentLoading && <p className="erp-table-status">Loading bills...</p>}
+                {isBillsPaymentView && billsPaymentError && (
+                  <p className="erp-table-status erp-table-status-error">{billsPaymentError}</p>
+                )}
                 {isAccountPropertiesView && accountMappingsLoading && <p className="erp-table-status">Loading account mappings...</p>}
                 {isAccountPropertiesView && accountMappingsError && (
                   <p className="erp-table-status erp-table-status-error">{accountMappingsError}</p>
