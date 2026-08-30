@@ -9,6 +9,47 @@ const formatCurrencyValue = (value) =>
     maximumFractionDigits: 2,
   });
 
+const toNullablePositiveNumber = (value) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : null;
+};
+
+const formatApiErrorMessage = (result, fallbackMessage) => {
+  const detail = result?.detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((entry) => {
+        const path = Array.isArray(entry?.loc) ? entry.loc.join('.') : 'request';
+        return `${path}: ${entry?.msg || 'Invalid value'}`;
+      })
+      .join('\n');
+  }
+
+  return detail || result?.message || fallbackMessage;
+};
+
+const buildTransactionPayload = ({ items, tenders, total, tax, currentUser }) => ({
+  items: items.map((item) => ({
+    code: String(item.code || ''),
+    description: String(item.description || ''),
+    quantity: Math.max(1, Math.trunc(Number(item.quantity || 0))),
+    price: Number(item.price || 0),
+    taxable: Boolean(item.taxable),
+    rep: String(item.rep || 'T001'),
+    item_id: toNullablePositiveNumber(item.item_id),
+    category_id: toNullablePositiveNumber(item.category_id),
+    category: String(item.category || ''),
+  })),
+  tenders: tenders.map((tender) => ({
+    code: String(tender.code || ''),
+    amount: Number(tender.amount || 0),
+  })),
+  total: Number(total || 0),
+  tax: Number(tax || 0),
+  cashier_id: Number(currentUser?.id || 1002),
+  store_id: Number(currentUser?.store_id || 1),
+});
+
 const PosWorkspace = memo(function PosWorkspace({
   items,
   inputValue,
@@ -557,14 +598,13 @@ function App({ currentUser, onLogout }) {
         amount: parseFloat(amount),
       }));
 
-    const payload = {
+    const payload = buildTransactionPayload({
       items,
       tenders: tenderData,
       total,
       tax,
-      cashier_id: Number(currentUser?.id || 1002),
-      store_id: Number(currentUser?.store_id || 1),
-    };
+      currentUser,
+    });
 
     try {
       const res = await apiFetch(`${API_BASE_URL}/transaction`, {
@@ -681,7 +721,7 @@ function App({ currentUser, onLogout }) {
           setCustomerData(null);
         }
       } else {
-        alert(result?.detail || 'Failed to save transaction');
+        alert(formatApiErrorMessage(result, 'Failed to save transaction'));
       }
     } catch (err) {
       console.error(err);
@@ -703,14 +743,13 @@ function App({ currentUser, onLogout }) {
       const res = await apiFetch(`${API_BASE_URL}/transaction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(buildTransactionPayload({
           items,
           tenders: tenderData,
           total,
           tax,
-          cashier_id: Number(currentUser?.id || 1002),
-          store_id: Number(currentUser?.store_id || 1),
-        }),
+          currentUser,
+        })),
       });
 
       const result = await res.json();
@@ -725,7 +764,7 @@ function App({ currentUser, onLogout }) {
         setCustomerName("");
         setCustomerData(null);
       } else {
-        alert(result?.detail || 'Failed to save transaction');
+        alert(formatApiErrorMessage(result, 'Failed to save transaction'));
       }
     } catch (err) {
       console.error(err);
