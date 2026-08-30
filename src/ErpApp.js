@@ -304,6 +304,7 @@ function createEmptyBillForm() {
     locationStoreId: "",
     lpoReceived: false,
     lpoNumber: "",
+    grnNumber: "",
   };
 }
 
@@ -1156,7 +1157,7 @@ function buildPurchaseOrderPreviewHtml(preview, autoPrint = false) {
               <div class="meta-card">
                 <h3>Delivery Details</h3>
                 <div class="meta-list">
-                  <div class="meta-row"><span>P To</span><span>${escapeHtml(preview.pTo)}</span></div>
+                  <div class="meta-row"><span>Ship To</span><span>${escapeHtml(preview.pTo)}</span></div>
                   <div class="meta-row"><span>Ship To</span><span>${escapeHtml(preview.shipTo)}</span></div>
                   <div class="meta-row"><span>Ship Via</span><span>${escapeHtml(preview.shipVia)}</span></div>
                   <div class="meta-row"><span>Terms</span><span>${escapeHtml(preview.terms)}</span></div>
@@ -1496,7 +1497,9 @@ function mapBillPaymentRecord(bill) {
     locationStoreId: String(bill?.location_store_id || ""),
     location: String(bill?.location || ""),
     lpoNumber: String(bill?.lpo_number || ""),
+    grnNumber: String(bill?.grn_number || ""),
     status: String(bill?.status || "Pending"),
+    tracking: String(bill?.tracking_status || "Posted"),
   };
 }
 
@@ -1659,6 +1662,13 @@ const DASHBOARD_CATEGORY_COLORS = [
   "#ff6da8",
   "#313849",
 ];
+const DASHBOARD_RANGE_OPTIONS = [
+  { id: "today", label: "Today" },
+  { id: "week", label: "This Week" },
+  { id: "month", label: "This Month" },
+  { id: "year", label: "This Year" },
+  { id: "custom", label: "Custom" },
+];
 const TABLE_PAGE_SIZE_OPTIONS = [50, 500, 1000];
 
 async function fetchJsonWithFallback(pathWithQuery, options, defaultErrorMessage) {
@@ -1702,6 +1712,26 @@ async function fetchDashboardJson(pathWithQuery) {
 function getLocalDateInputValue(dateValue = new Date()) {
   const pad = (part) => String(part).padStart(2, "0");
   return `${dateValue.getFullYear()}-${pad(dateValue.getMonth() + 1)}-${pad(dateValue.getDate())}`;
+}
+
+function getDashboardRangeDates(rangeId, today = new Date()) {
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let start = new Date(end);
+
+  if (rangeId === "week") {
+    const day = start.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + mondayOffset);
+  } else if (rangeId === "month") {
+    start = new Date(end.getFullYear(), end.getMonth(), 1);
+  } else if (rangeId === "year") {
+    start = new Date(end.getFullYear(), 0, 1);
+  }
+
+  return {
+    from: getLocalDateInputValue(start),
+    to: getLocalDateInputValue(end),
+  };
 }
 
 function mapItemToForm(item, categories = []) {
@@ -2268,11 +2298,13 @@ function ErpApp({ currentUser, onLogout }) {
     totalBaskets: 0,
   });
   const [dashboardSummaryLoading, setDashboardSummaryLoading] = useState(false);
-  const [dashboardDateFrom] = useState(() => {
-    const now = new Date();
-    return getLocalDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1));
-  });
-  const [dashboardDateTo] = useState(() => getLocalDateInputValue(new Date()));
+  const [dashboardRange, setDashboardRange] = useState("today");
+  const [dashboardDateFrom, setDashboardDateFrom] = useState(
+    () => getDashboardRangeDates("today").from
+  );
+  const [dashboardDateTo, setDashboardDateTo] = useState(
+    () => getDashboardRangeDates("today").to
+  );
   const [dashboardCategorySales, setDashboardCategorySales] = useState([]);
   const [dashboardCategorySalesTotal, setDashboardCategorySalesTotal] = useState(0);
   const [dashboardCategorySalesLoading, setDashboardCategorySalesLoading] = useState(false);
@@ -2364,8 +2396,10 @@ function ErpApp({ currentUser, onLogout }) {
         "Bill Due Date",
         "Location",
         "LPO No",
+        "GRN No",
         "Amount Due",
         "Status",
+        "Tracking",
       ],
       rows: billsPaymentRecords.map((bill) => [
         bill.invoiceNo,
@@ -2374,8 +2408,10 @@ function ErpApp({ currentUser, onLogout }) {
         bill.billDueDate,
         bill.location,
         bill.lpoNumber || "-",
+        bill.grnNumber || "-",
         bill.amountDue,
         bill.status,
+        bill.tracking || "Pending",
       ]),
     }),
     [billsPaymentRecords]
@@ -2460,7 +2496,20 @@ function ErpApp({ currentUser, onLogout }) {
     const to = dashboardDateTo ? new Date(`${dashboardDateTo}T00:00:00`) : null;
 
     if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      return "This Month";
+      return "Today";
+    }
+
+    const selectedRange = DASHBOARD_RANGE_OPTIONS.find((option) => option.id === dashboardRange);
+    if (selectedRange && selectedRange.id !== "custom") {
+      return selectedRange.label;
+    }
+
+    if (
+      from.getFullYear() === to.getFullYear() &&
+      from.getMonth() === to.getMonth() &&
+      from.getDate() === to.getDate()
+    ) {
+      return from.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
     }
 
     if (
@@ -2472,7 +2521,7 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     return "Custom Range";
-  }, [dashboardDateFrom, dashboardDateTo]);
+  }, [dashboardDateFrom, dashboardDateTo, dashboardRange]);
   const dashboardStatCards = [
     {
       id: "sales",
@@ -4382,6 +4431,10 @@ function ErpApp({ currentUser, onLogout }) {
       const next = { ...prev, [field]: value };
       if (field === "lpoReceived" && !value) {
         next.lpoNumber = "";
+        next.grnNumber = "";
+      }
+      if (field === "lpoNumber") {
+        next.grnNumber = "";
       }
       return next;
     });
@@ -4404,6 +4457,9 @@ function ErpApp({ currentUser, onLogout }) {
       setNewBillForm((prev) => ({
         ...prev,
         lpoNumber: billSource.po_number || searchValue,
+        grnNumber: billSource.goods_received_id
+          ? `GRN-${String(Number(billSource.goods_received_id || 0)).padStart(6, "0")}`
+          : prev.grnNumber,
         supplierId: billSource.supplier_id ? String(billSource.supplier_id) : prev.supplierId,
         supplierName: billSource.supplier_name || prev.supplierName,
         amountDue: Number(billSource.amount_due || 0).toFixed(2),
@@ -4488,7 +4544,9 @@ function ErpApp({ currentUser, onLogout }) {
             location_store_id: Number(locationStoreId || 0),
             location,
             lpo_number: newBillForm.lpoReceived ? lpoNumber : "",
+            grn_number: newBillForm.lpoReceived ? newBillForm.grnNumber : "",
             status,
+            tracking_status: "Posted",
           }),
         },
         "Failed to save bill to account entry"
@@ -4507,7 +4565,9 @@ function ErpApp({ currentUser, onLogout }) {
         locationStoreId,
         location,
         lpoNumber: newBillForm.lpoReceived ? lpoNumber : "",
+        grnNumber: newBillForm.lpoReceived ? newBillForm.grnNumber : "",
         status,
+        tracking: "Posted",
       };
 
       setBillsPaymentRecords((prev) => [savedBill, ...prev]);
@@ -5760,10 +5820,16 @@ function ErpApp({ currentUser, onLogout }) {
     }
   };
 
-  const loadDashboardSummary = async () => {
+  const loadDashboardSummary = async (dateFrom, dateTo) => {
+    if (!dateFrom || !dateTo) return;
+
     setDashboardSummaryLoading(true);
     try {
-      const summaryData = await fetchDashboardJson("/erp/dashboard/summary");
+      const params = new URLSearchParams({
+        date_from: dateFrom,
+        date_to: dateTo,
+      });
+      const summaryData = await fetchDashboardJson(`/erp/dashboard/summary?${params.toString()}`);
       setDashboardSummary({
         totalSales: Number(summaryData?.total_sales || 0),
         totalBaskets: Number(summaryData?.total_baskets || 0),
@@ -5776,6 +5842,15 @@ function ErpApp({ currentUser, onLogout }) {
     } finally {
       setDashboardSummaryLoading(false);
     }
+  };
+
+  const applyDashboardRange = (rangeId) => {
+    setDashboardRange(rangeId);
+    if (rangeId === "custom") return;
+
+    const nextRange = getDashboardRangeDates(rangeId);
+    setDashboardDateFrom(nextRange.from);
+    setDashboardDateTo(nextRange.to);
   };
 
   const loadDashboardCategorySales = async (dateFrom, dateTo) => {
@@ -6624,11 +6699,6 @@ function ErpApp({ currentUser, onLogout }) {
 
   useEffect(() => {
     if (!isDashboardView) return;
-    loadDashboardSummary();
-  }, [isDashboardView]);
-
-  useEffect(() => {
-    if (!isDashboardView) return;
     loadItems("");
   }, [isDashboardView]);
 
@@ -6636,11 +6706,16 @@ function ErpApp({ currentUser, onLogout }) {
     if (!isDashboardView) return;
     if (!dashboardDateFrom || !dashboardDateTo) return;
     if (dashboardDateFrom > dashboardDateTo) {
+      setDashboardSummary({
+        totalSales: 0,
+        totalBaskets: 0,
+      });
       setDashboardCategorySales([]);
       setDashboardCategorySalesTotal(0);
       setDashboardCategorySalesError("Choose a valid date range.");
       return;
     }
+    loadDashboardSummary(dashboardDateFrom, dashboardDateTo);
     loadDashboardCategorySales(dashboardDateFrom, dashboardDateTo);
   }, [isDashboardView, dashboardDateFrom, dashboardDateTo]);
 
@@ -7736,9 +7811,22 @@ function ErpApp({ currentUser, onLogout }) {
                                 className={isSelected ? "is-selected-row" : ""}
                                 onClick={() => setSelectedFinanceRowKey(rowKey)}
                               >
-                                {row.map((cell, cellIndex) => (
-                                  <td key={`${activeFinanceTab}-${rowIndex}-${cellIndex}`}>{cell}</td>
-                                ))}
+                                {row.map((cell, cellIndex) => {
+                                  const isBillTrackingCell =
+                                    isBillsPaymentView && cellIndex === row.length - 1;
+                                  const trackingClass = String(cell || "pending").toLowerCase();
+                                  return (
+                                    <td key={`${activeFinanceTab}-${rowIndex}-${cellIndex}`}>
+                                      {isBillTrackingCell ? (
+                                        <span className={`erp-bill-tracking-badge is-${trackingClass}`}>
+                                          {cell}
+                                        </span>
+                                      ) : (
+                                        cell
+                                      )}
+                                    </td>
+                                  );
+                                })}
                               </tr>
                             );
                           })
@@ -8077,7 +8165,43 @@ function ErpApp({ currentUser, onLogout }) {
                     <div>
                       <h3>Top Sales Categories</h3>
                     </div>
-                    <div className="erp-category-sales-period">{dashboardCategoryPeriodLabel}</div>
+                    <div className="erp-dashboard-range-panel">
+                      <div className="erp-dashboard-range-tabs" role="group" aria-label="Dashboard range">
+                        {DASHBOARD_RANGE_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={`erp-dashboard-range-tab ${
+                              dashboardRange === option.id ? "is-active" : ""
+                            }`}
+                            onClick={() => applyDashboardRange(option.id)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      {dashboardRange === "custom" && (
+                        <div className="erp-dashboard-custom-range">
+                          <label>
+                            <span>From</span>
+                            <input
+                              type="date"
+                              value={dashboardDateFrom}
+                              onChange={(event) => setDashboardDateFrom(event.target.value)}
+                            />
+                          </label>
+                          <label>
+                            <span>To</span>
+                            <input
+                              type="date"
+                              value={dashboardDateTo}
+                              onChange={(event) => setDashboardDateTo(event.target.value)}
+                            />
+                          </label>
+                        </div>
+                      )}
+                      <div className="erp-category-sales-period">{dashboardCategoryPeriodLabel}</div>
+                    </div>
                   </div>
 
                   <div className="erp-category-sales-body">
@@ -10262,4 +10386,3 @@ function ErpApp({ currentUser, onLogout }) {
 }
 
 export default ErpApp;
-

@@ -443,6 +443,8 @@ class ERPBillAccountEntryCreate(BaseModel):
     location_store_id: int = 0
     location: str = ""
     lpo_number: str = ""
+    grn_number: str = ""
+    tracking_status: str = "Pending"
     status: str = "Pending"
 
 
@@ -467,7 +469,9 @@ class ERPBillPaymentOut(BaseModel):
     location_store_id: int = 0
     location: str = ""
     lpo_number: str = ""
+    grn_number: str = ""
     status: str = "Pending"
+    tracking_status: str = "Pending"
     account_id: Optional[int] = None
     account_code: str = ""
     account_name: str = ""
@@ -1927,7 +1931,7 @@ async def get_mapped_erp_account(mapping_key: str) -> Optional[ERPAccountOut]:
     return map_account_for_erp(account_doc) if account_doc else None
 
 
-def map_bill_payment_for_erp(doc: dict) -> ERPBillPaymentOut:
+def map_bill_payment_for_erp(doc: dict, resolved_grn_number: str = "") -> ERPBillPaymentOut:
     return ERPBillPaymentOut(
         id=int(doc.get("ID", 0) or 0),
         invoice_no=str(doc.get("RefNo", "") or ""),
@@ -1939,7 +1943,9 @@ def map_bill_payment_for_erp(doc: dict) -> ERPBillPaymentOut:
         location_store_id=int(doc.get("StoreID", 0) or 0),
         location=str(doc.get("Location", "") or ""),
         lpo_number=str(doc.get("PO", "") or ""),
+        grn_number=str(doc.get("GRN", "") or resolved_grn_number or ""),
         status=str(doc.get("Status", "") or "Pending"),
+        tracking_status=str(doc.get("TrackingStatus", "") or "Posted"),
         account_id=coerce_optional_int(doc.get("CostingBillID")),
         account_code=str(doc.get("AccountCode", "") or ""),
         account_name=str(doc.get("AccountName", "") or ""),
@@ -1947,6 +1953,22 @@ def map_bill_payment_for_erp(doc: dict) -> ERPBillPaymentOut:
             doc.get("LastUpdated", doc.get("Lastupdated", doc.get("CreatedAt")))
         ),
     )
+
+
+async def resolve_grn_number_for_po(po_number: str) -> str:
+    search_value = str(po_number or "").strip()
+    if not search_value:
+        return ""
+
+    goods_received_doc = await goods_received_collection.find_one(
+        {"PONumber": {"$regex": f"^{re.escape(search_value)}$", "$options": "i"}},
+        sort=[("DateCreated", -1), ("ID", -1)],
+    )
+    if not goods_received_doc:
+        return ""
+
+    goods_received_id = int(goods_received_doc.get("ID", 0) or 0)
+    return str(goods_received_doc.get("GRNNumber", "") or build_grn_number(goods_received_id))
 
 
 def build_grn_number(goods_received_id: int) -> str:
@@ -2953,7 +2975,13 @@ async def list_erp_bill_account_entries(search: str = Query("", max_length=100))
         }
 
     bill_docs = await fusion_bill_collection.find(query).sort("LastUpdated", -1).to_list(10000)
-    return [map_bill_payment_for_erp(doc) for doc in bill_docs]
+    bills: List[ERPBillPaymentOut] = []
+    for doc in bill_docs:
+        resolved_grn_number = ""
+        if not str(doc.get("GRN", "") or "").strip():
+            resolved_grn_number = await resolve_grn_number_for_po(str(doc.get("PO", "") or ""))
+        bills.append(map_bill_payment_for_erp(doc, resolved_grn_number))
+    return bills
 
 
 @app.post("/erp/account-entry/bills", response_model=ERPBillAccountEntryOut, status_code=201)
@@ -3006,8 +3034,11 @@ async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
         f"{payload.location.strip() or 'No location'}"
     )[:100]
     lpo_number = payload.lpo_number.strip()
+    grn_number = payload.grn_number.strip()
     store_id = int(payload.location_store_id or 0)
     supplier_id = int(payload.supplier_id or 0)
+    if lpo_number and not grn_number:
+        grn_number = await resolve_grn_number_for_po(lpo_number)
 
     bill_doc = {
         "ID": next_bill_id,
@@ -3029,13 +3060,14 @@ async def create_erp_bill_account_entry(payload: ERPBillAccountEntryCreate):
         "Credits": 0.0,
         "RemitID": 0,
         "PO": lpo_number[:20] or None,
-        "GRN": None,
+        "GRN": grn_number[:20] or None,
         "tType": 0,
         "SupplierName": supplier_name,
         "Location": payload.location.strip(),
         "AccountCode": payable_account.account_code if payable_account else "",
         "AccountName": payable_account.account_name if payable_account else "",
         "Status": payload.status.strip() or "Pending",
+        "TrackingStatus": payload.tracking_status.strip() or "Posted",
         "CreatedAt": now,
         "LastUpdated": now,
     }
@@ -4958,10 +4990,30 @@ async def save_user_fingerprint(user_id: int, payload: FingerprintEnrollmentRequ
 
 
 @app.get("/erp/dashboard/summary", response_model=ERPDashboardSummaryOut)
-async def get_erp_dashboard_summary():
-    total_baskets = await transaction_collection.count_documents({})
+async def get_erp_dashboard_summary(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+):
+    today = datetime.utcnow().date()
+    resolved_date_to = date_to or today
+    resolved_date_from = date_from or resolved_date_to
+
+    if resolved_date_from > resolved_date_to:
+        raise HTTPException(status_code=400, detail="Date From cannot be later than Date To")
+
+    start_datetime = datetime.combine(resolved_date_from, datetime.min.time())
+    end_datetime = datetime.combine(resolved_date_to + timedelta(days=1), datetime.min.time())
+    date_match = {
+        "sdateTime": {
+            "$gte": start_datetime,
+            "$lt": end_datetime,
+        }
+    }
+
+    total_baskets = await transaction_collection.count_documents(date_match)
     totals = await transaction_collection.aggregate(
         [
+            {"$match": date_match},
             {
                 "$project": {
                     "numeric_total": {

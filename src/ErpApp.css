@@ -1004,6 +1004,75 @@
   margin: 8px 0 0;
 }
 
+.erp-dashboard-range-panel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.erp-dashboard-range-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(191, 203, 212, 0.78);
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.erp-dashboard-range-tab {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #496170;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.erp-dashboard-range-tab:hover {
+  background: rgba(220, 228, 234, 0.72);
+  color: #203944;
+}
+
+.erp-dashboard-range-tab.is-active {
+  background: #203944;
+  color: #ffffff;
+  box-shadow: 0 7px 14px rgba(32, 57, 68, 0.18);
+}
+
+.erp-dashboard-custom-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.erp-dashboard-custom-range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #405866;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.erp-dashboard-custom-range input {
+  width: 138px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(184, 197, 207, 0.86);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #233b46;
+  font: inherit;
+}
+
 .erp-category-sales-period {
   display: inline-flex;
   align-items: center;
@@ -1831,48 +1900,87 @@
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(1),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(1) {
-  width: 15%;
+  width: 12%;
 }
 
 .erp-data-table.is-bills-payment-table tbody td:nth-child(1),
-.erp-data-table.is-bills-payment-table tbody td:nth-child(7) {
+.erp-data-table.is-bills-payment-table tbody td:nth-child(8) {
   font-weight: 700;
   color: #263247;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(2),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(2) {
-  width: 11%;
+  width: 10%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(3),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(3) {
-  width: 18%;
+  width: 15%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(4),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(4) {
-  width: 11%;
+  width: 10%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(5),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(5) {
-  width: 15%;
+  width: 13%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(6),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(6) {
-  width: 11%;
+  width: 10%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(7),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(7) {
-  width: 11%;
+  width: 10%;
 }
 
 .erp-data-table.is-bills-payment-table thead th:nth-child(8),
 .erp-data-table.is-bills-payment-table tbody td:nth-child(8) {
   width: 8%;
+}
+
+.erp-data-table.is-bills-payment-table thead th:nth-child(9),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(9),
+.erp-data-table.is-bills-payment-table thead th:nth-child(10),
+.erp-data-table.is-bills-payment-table tbody td:nth-child(10) {
+  width: 8%;
+}
+
+.erp-bill-tracking-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  border: 1px solid rgba(126, 143, 170, 0.26);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #f3f6fb;
+  color: #42526a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.erp-bill-tracking-badge.is-posted {
+  border-color: rgba(62, 144, 96, 0.34);
+  background: #eaf8ef;
+  color: #1f6a3f;
+}
+
+.erp-bill-tracking-badge.is-paid {
+  border-color: rgba(42, 111, 195, 0.34);
+  background: #edf5ff;
+  color: #23568f;
+}
+
+.erp-bill-tracking-badge.is-pending {
+  border-color: rgba(190, 142, 40, 0.34);
+  background: #fff7e4;
+  color: #805a12;
 }
 
 .erp-account-tree-cell {
@@ -6014,6 +6122,25 @@
   .erp-category-sales-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .erp-dashboard-range-panel {
+    justify-content: flex-start;
+  }
+
+  .erp-dashboard-range-tabs,
+  .erp-dashboard-custom-range {
+    width: 100%;
+  }
+
+  .erp-dashboard-range-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .erp-dashboard-range-tabs::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .erp-category-sales-body {
