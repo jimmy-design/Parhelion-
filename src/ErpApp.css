@@ -1017,16 +1017,16 @@
   align-items: center;
   gap: 4px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: 999px;
   border: 1px solid rgba(191, 203, 212, 0.78);
   background: rgba(248, 250, 252, 0.88);
 }
 
 .erp-dashboard-range-tab {
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 14px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 999px;
   background: transparent;
   color: #496170;
   font-size: 12px;
@@ -1041,9 +1041,9 @@
 }
 
 .erp-dashboard-range-tab.is-active {
-  background: #203944;
+  background: #85888d;
   color: #ffffff;
-  box-shadow: 0 7px 14px rgba(32, 57, 68, 0.18);
+  box-shadow: 0 7px 14px rgba(78, 83, 92, 0.18);
 }
 
 .erp-dashboard-custom-range {
@@ -1067,7 +1067,7 @@
   min-height: 34px;
   padding: 0 8px;
   border: 1px solid rgba(184, 197, 207, 0.86);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   color: #233b46;
   font: inherit;
@@ -1086,6 +1086,151 @@
   color: #314752;
   font-size: 12px;
   font-weight: 700;
+}
+
+.erp-revenue-activity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.erp-revenue-activity-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.erp-revenue-activity-header h3 {
+  margin: 0;
+}
+
+.erp-revenue-activity-header strong {
+  display: block;
+  margin-top: 8px;
+  color: #171b22;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.erp-revenue-date-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #f1f3f6;
+  color: #303741;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.erp-revenue-bar-shell {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 242px;
+  align-items: stretch;
+}
+
+.erp-revenue-bar-shell > .erp-table-status {
+  grid-column: 1 / -1;
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+}
+
+.erp-revenue-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 6px 0 28px;
+  color: #9aa3ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.erp-revenue-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(42px, 1fr);
+  gap: 18px;
+  align-items: end;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 6px 4px 0;
+  scrollbar-width: none;
+}
+
+.erp-revenue-bars::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.erp-revenue-bar-column {
+  display: grid;
+  grid-template-rows: minmax(160px, 1fr) 22px;
+  gap: 8px;
+  justify-items: center;
+  min-width: 42px;
+}
+
+.erp-revenue-bar-track {
+  position: relative;
+  width: 30px;
+  height: 100%;
+  border-radius: 999px;
+  background: #eef1f3;
+  overflow: hidden;
+}
+
+.erp-revenue-bar-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: 0;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #101518, #2c3435);
+  box-shadow: inset 8px 0 16px rgba(255, 255, 255, 0.09);
+}
+
+.erp-revenue-bar-fill.is-featured {
+  background: linear-gradient(145deg, #a9aaad, #7d7f83);
+}
+
+.erp-revenue-bar-label {
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.erp-revenue-range-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.erp-revenue-range-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #7a828b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.erp-revenue-range-pill.is-active {
+  background: #85888d;
+  color: #ffffff;
 }
 
 .erp-category-sales-body {
@@ -6141,6 +6286,22 @@
   .erp-dashboard-range-tabs::-webkit-scrollbar {
     width: 0;
     height: 0;
+  }
+
+  .erp-revenue-activity-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .erp-revenue-date-chip {
+    width: fit-content;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .erp-revenue-bars {
+    grid-auto-columns: minmax(40px, 1fr);
+    gap: 14px;
   }
 
   .erp-category-sales-body {

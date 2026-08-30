@@ -45,6 +45,7 @@ import {
   LayoutGrid,
   PanelLeftClose,
   Wrench,
+  CalendarDays,
 } from "lucide-react";
 import { API_BASE_URL, apiFetch } from "./appConfig";
 
@@ -1734,6 +1735,33 @@ function getDashboardRangeDates(rangeId, today = new Date()) {
   };
 }
 
+function buildDashboardRevenueBars(points, rangeId) {
+  const rows = Array.isArray(points) ? points : [];
+  if (!rows.length) return [];
+
+  if (rangeId === "year") {
+    const monthTotals = new Map();
+    rows.forEach((point) => {
+      const pointDate = new Date(`${point.date}T00:00:00`);
+      if (Number.isNaN(pointDate.getTime())) return;
+      const key = `${pointDate.getFullYear()}-${String(pointDate.getMonth() + 1).padStart(2, "0")}`;
+      const label = pointDate.toLocaleString(undefined, { month: "short" });
+      const existing = monthTotals.get(key) || { label, sales: 0 };
+      monthTotals.set(key, {
+        ...existing,
+        sales: existing.sales + Number(point.sales || 0),
+      });
+    });
+    return Array.from(monthTotals.values());
+  }
+
+  const maxBars = rangeId === "week" ? 7 : 8;
+  return rows.slice(-maxBars).map((point) => ({
+    label: String(point.label || ""),
+    sales: Number(point.sales || 0),
+  }));
+}
+
 function mapItemToForm(item, categories = []) {
   const cost = Number(item?.cost || 0);
   const price = Number(item?.price || 0);
@@ -2309,6 +2337,10 @@ function ErpApp({ currentUser, onLogout }) {
   const [dashboardCategorySalesTotal, setDashboardCategorySalesTotal] = useState(0);
   const [dashboardCategorySalesLoading, setDashboardCategorySalesLoading] = useState(false);
   const [dashboardCategorySalesError, setDashboardCategorySalesError] = useState("");
+  const [dashboardSalesTrend, setDashboardSalesTrend] = useState([]);
+  const [dashboardSalesTrendTotal, setDashboardSalesTrendTotal] = useState(0);
+  const [dashboardSalesTrendLoading, setDashboardSalesTrendLoading] = useState(false);
+  const [dashboardSalesTrendError, setDashboardSalesTrendError] = useState("");
   const [showInventoryItemPropertiesModal, setShowInventoryItemPropertiesModal] = useState(false);
   const [savingInventoryItemProperties, setSavingInventoryItemProperties] = useState(false);
   const [inventoryItemPropertiesForm, setInventoryItemPropertiesForm] = useState({
@@ -2491,6 +2523,30 @@ function ErpApp({ currentUser, onLogout }) {
       }),
     };
   }, [dashboardCategorySales, dashboardCategorySalesTotal]);
+  const dashboardRevenueBars = useMemo(() => {
+    const bars = buildDashboardRevenueBars(dashboardSalesTrend, dashboardRange);
+    const maxSales = Math.max(...bars.map((bar) => Number(bar.sales || 0)), 0);
+
+    return bars.map((bar, index) => {
+      const sales = Number(bar.sales || 0);
+      const height = maxSales > 0 ? Math.max((sales / maxSales) * 100, sales > 0 ? 18 : 0) : 0;
+      return {
+        ...bar,
+        height,
+        isFeatured: index === Math.floor(bars.length / 2),
+      };
+    });
+  }, [dashboardSalesTrend, dashboardRange]);
+  const dashboardRevenueAxisLabels = useMemo(() => {
+    const maxSales = Math.max(...dashboardRevenueBars.map((bar) => Number(bar.sales || 0)), 0);
+    if (maxSales <= 0) return ["10K", "8K", "4K", "2K", "0"];
+
+    return [1, 0.8, 0.4, 0.2, 0].map((ratio) => {
+      const value = maxSales * ratio;
+      if (value >= 1000) return `${Math.round(value / 1000)}K`;
+      return String(Math.round(value));
+    });
+  }, [dashboardRevenueBars]);
   const dashboardCategoryPeriodLabel = useMemo(() => {
     const from = dashboardDateFrom ? new Date(`${dashboardDateFrom}T00:00:00`) : null;
     const to = dashboardDateTo ? new Date(`${dashboardDateTo}T00:00:00`) : null;
@@ -2522,6 +2578,23 @@ function ErpApp({ currentUser, onLogout }) {
 
     return "Custom Range";
   }, [dashboardDateFrom, dashboardDateTo, dashboardRange]);
+  const dashboardDateRangeChip = useMemo(() => {
+    const from = dashboardDateFrom ? new Date(`${dashboardDateFrom}T00:00:00`) : null;
+    const to = dashboardDateTo ? new Date(`${dashboardDateTo}T00:00:00`) : null;
+
+    if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return "Select dates";
+    }
+
+    const formatDate = (value) =>
+      value.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+    if (dashboardDateFrom === dashboardDateTo) {
+      return formatDate(from);
+    }
+
+    return `${formatDate(from)} - ${formatDate(to)}`;
+  }, [dashboardDateFrom, dashboardDateTo]);
   const dashboardStatCards = [
     {
       id: "sales",
@@ -5853,6 +5926,36 @@ function ErpApp({ currentUser, onLogout }) {
     setDashboardDateTo(nextRange.to);
   };
 
+  const loadDashboardSalesTrend = async (dateFrom, dateTo) => {
+    if (!dateFrom || !dateTo) return;
+
+    setDashboardSalesTrendLoading(true);
+    setDashboardSalesTrendError("");
+    try {
+      const params = new URLSearchParams({
+        date_from: dateFrom,
+        date_to: dateTo,
+      });
+      const data = await fetchDashboardJson(`/erp/dashboard/daily-sales?${params.toString()}`);
+      setDashboardSalesTrend(
+        Array.isArray(data?.points)
+          ? data.points.map((point) => ({
+              date: String(point.date || ""),
+              label: String(point.label || ""),
+              sales: Number(point.sales || 0),
+            }))
+          : []
+      );
+      setDashboardSalesTrendTotal(Number(data?.total_sales || 0));
+    } catch (error) {
+      setDashboardSalesTrend([]);
+      setDashboardSalesTrendTotal(0);
+      setDashboardSalesTrendError(error.message || "Unable to load revenue activity.");
+    } finally {
+      setDashboardSalesTrendLoading(false);
+    }
+  };
+
   const loadDashboardCategorySales = async (dateFrom, dateTo) => {
     if (!dateFrom || !dateTo) return;
 
@@ -6713,9 +6816,13 @@ function ErpApp({ currentUser, onLogout }) {
       setDashboardCategorySales([]);
       setDashboardCategorySalesTotal(0);
       setDashboardCategorySalesError("Choose a valid date range.");
+      setDashboardSalesTrend([]);
+      setDashboardSalesTrendTotal(0);
+      setDashboardSalesTrendError("Choose a valid date range.");
       return;
     }
     loadDashboardSummary(dashboardDateFrom, dashboardDateTo);
+    loadDashboardSalesTrend(dashboardDateFrom, dashboardDateTo);
     loadDashboardCategorySales(dashboardDateFrom, dashboardDateTo);
   }, [isDashboardView, dashboardDateFrom, dashboardDateTo]);
 
@@ -8294,9 +8401,62 @@ function ErpApp({ currentUser, onLogout }) {
                   <p>Category sales distribution will appear here when dashboard data is available.</p>
                 </article>
               )}
-              <article className="erp-panel erp-home-card">
-                <h3>Recent Activity</h3>
-                <p>Show latest transactions, approvals, and alerts here.</p>
+              <article className="erp-panel erp-home-card erp-revenue-activity-card">
+                <div className="erp-revenue-activity-header">
+                  <div>
+                    <h3>Recent Activity</h3>
+                    <strong>{formatCurrencyValue(dashboardSalesTrendTotal)}</strong>
+                  </div>
+                  <span className="erp-revenue-date-chip">
+                    <CalendarDays size={14} />
+                    {dashboardDateRangeChip}
+                  </span>
+                </div>
+
+                <div className="erp-revenue-bar-shell">
+                  {dashboardSalesTrendError ? (
+                    <p className="erp-table-status erp-table-status-error">{dashboardSalesTrendError}</p>
+                  ) : dashboardSalesTrendLoading ? (
+                    <p className="erp-table-status">Loading revenue...</p>
+                  ) : dashboardRevenueBars.length ? (
+                    <>
+                      <div className="erp-revenue-axis" aria-hidden="true">
+                        {dashboardRevenueAxisLabels.map((label, index) => (
+                          <span key={`${label}-${index}`}>{label}</span>
+                        ))}
+                      </div>
+                      <div className="erp-revenue-bars" role="img" aria-label="Recent revenue activity">
+                        {dashboardRevenueBars.map((bar, index) => (
+                          <div key={`${bar.label}-${index}`} className="erp-revenue-bar-column">
+                            <div className="erp-revenue-bar-track">
+                              <span
+                                className={`erp-revenue-bar-fill ${bar.isFeatured ? "is-featured" : ""}`}
+                                style={{ height: `${bar.height}%` }}
+                                title={`${bar.label}: ${formatCurrencyValue(bar.sales)}`}
+                              />
+                            </div>
+                            <span className="erp-revenue-bar-label">{bar.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="erp-table-status">No revenue activity in the selected period.</p>
+                  )}
+                </div>
+
+                <div className="erp-revenue-range-summary">
+                  {DASHBOARD_RANGE_OPTIONS.filter((option) => option.id !== "custom").map((option) => (
+                    <span
+                      key={option.id}
+                      className={`erp-revenue-range-pill ${
+                        dashboardRange === option.id ? "is-active" : ""
+                      }`}
+                    >
+                      {option.label.replace("This ", "")}
+                    </span>
+                  ))}
+                </div>
               </article>
             </>
           )}
