@@ -36,6 +36,7 @@ from database.mongodb import (
     purchase_order_entries_collection,
     goods_received_collection,
     goods_received_entry_collection,
+    mpesa_transaction_collection,
     price_change_collection,
     adjustment_collection,
     fusion_bill_collection,
@@ -5675,15 +5676,50 @@ load_dotenv()  # Loads .env file from your backend folder
 @app.post("/api/mpesa/stkpush")
 async def stkpush(request: Request):
     data = await request.json()
-    phone = data.get("phone")
+    phone = re.sub(r"\D", "", str(data.get("phone", "")))
     amount = data.get("amount")
-    name = data.get("customer_name", "Customer")
+    name = str(data.get("customer_name", "Customer") or "Customer").strip()
+
+    if phone.startswith("0"):
+        phone = f"254{phone[1:]}"
+    elif phone and not phone.startswith("254"):
+        phone = f"254{phone}"
+
+    if not re.fullmatch(r"254(?:7|1)\d{8}", phone):
+        raise HTTPException(status_code=400, detail="Enter a valid Safaricom phone number, e.g. 254712345678")
+
+    try:
+        amount = int(round(float(amount)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Enter a valid M-Pesa amount")
+
+    if amount < 1:
+        raise HTTPException(status_code=400, detail="M-Pesa amount must be at least 1")
 
     consumer_key = os.getenv("MPESA_CONSUMER_KEY")
     consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
-    shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE")
+    shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE") or os.getenv("MPESA_SHORTCODE")
     passkey = os.getenv("MPESA_PASSKEY")
-    mode = os.getenv("MPESA_MODE", "sandbox")
+    callback_url = os.getenv("MPESA_CALLBACK_URL")
+    mode = os.getenv("MPESA_MODE", "sandbox").lower()
+    transaction_type = os.getenv("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")
+
+    missing_config = [
+        key
+        for key, value in {
+            "MPESA_CONSUMER_KEY": consumer_key,
+            "MPESA_CONSUMER_SECRET": consumer_secret,
+            "MPESA_BUSINESS_SHORTCODE/MPESA_SHORTCODE": shortcode,
+            "MPESA_PASSKEY": passkey,
+            "MPESA_CALLBACK_URL": callback_url,
+        }.items()
+        if not value
+    ]
+    if missing_config:
+        raise HTTPException(
+            status_code=500,
+            detail=f"M-Pesa config missing: {', '.join(missing_config)}",
+        )
 
     # Get token
     url = (
@@ -5691,9 +5727,16 @@ async def stkpush(request: Request):
         if mode == "live"
         else "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
     )
-    r = requests.get(url, auth=(consumer_key, consumer_secret))
-    token_data = r.json()
-    print("🔑 Token response:", token_data)
+    try:
+        r = requests.get(url, auth=(consumer_key, consumer_secret), timeout=30)
+        token_data = r.json()
+    except requests.RequestException as exc:
+        logging.exception("M-Pesa token request failed")
+        raise HTTPException(status_code=502, detail=f"Failed to contact M-Pesa auth service: {exc}") from exc
+    except ValueError as exc:
+        logging.exception("M-Pesa token response was not JSON")
+        raise HTTPException(status_code=502, detail="M-Pesa auth returned an invalid response") from exc
+    logging.info("M-Pesa token response status: %s", r.status_code)
     access_token = token_data.get("access_token")
 
     if not access_token:
@@ -5712,24 +5755,120 @@ async def stkpush(request: Request):
         "BusinessShortCode": shortcode,
         "Password": password,
         "Timestamp": timestamp,
-        "TransactionType": "CustomerBuyGoodsOnline",
+        "TransactionType": transaction_type,
         "Amount": amount,
         "PartyA": phone,
         "PartyB": shortcode,
         "PhoneNumber": phone,
-        "CallBackURL": "https://example.com/mpesa/callback",
-        "AccountReference": name,
+        "CallBackURL": callback_url,
+        "AccountReference": (name or "POS_SALE")[:12],
         "TransactionDesc": "POS Payment",
     }
 
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-    response = requests.post(stk_url, json=payload, headers=headers)
-    result = response.json()
+    try:
+        response = requests.post(stk_url, json=payload, headers=headers, timeout=30)
+        result = response.json()
+    except requests.RequestException as exc:
+        logging.exception("M-Pesa STK request failed")
+        raise HTTPException(status_code=502, detail=f"Failed to contact M-Pesa STK service: {exc}") from exc
+    except ValueError as exc:
+        logging.exception("M-Pesa STK response was not JSON")
+        raise HTTPException(status_code=502, detail="M-Pesa STK returned an invalid response") from exc
 
-    print("📲 Safaricom STK Response:", result)
+    logging.info("Safaricom STK response status=%s body=%s", response.status_code, result)
 
-    return {"success": True, "message": "STK push sent", "result": result}
+    if response.status_code != 200:
+        return {
+            "success": False,
+            "message": result.get("errorMessage") or result.get("ResponseDescription") or "STK push failed",
+            "result": result,
+        }
+
+    success = result.get("ResponseCode") == "0"
+    return {
+        "success": success,
+        "message": result.get("ResponseDescription") or result.get("errorMessage") or ("STK push sent" if success else "STK push failed"),
+        "result": result,
+    }
+
+
+@app.post("/api/mpesa/callback")
+async def mpesa_callback(request: Request):
+    data = await request.json()
+    callback = data.get("Body", {}).get("stkCallback", {})
+    result_code = callback.get("ResultCode")
+    result_desc = callback.get("ResultDesc", "")
+    checkout_request_id = callback.get("CheckoutRequestID", "")
+    merchant_request_id = callback.get("MerchantRequestID", "")
+
+    metadata_items = callback.get("CallbackMetadata", {}).get("Item", [])
+    metadata = {
+        str(item.get("Name")): item.get("Value")
+        for item in metadata_items
+        if item.get("Name")
+    }
+    try:
+        amount = int(round(float(metadata.get("Amount"))))
+    except (TypeError, ValueError):
+        amount = metadata.get("Amount")
+
+    transaction = {
+        "merchant_request_id": merchant_request_id,
+        "checkout_request_id": checkout_request_id,
+        "result_code": result_code,
+        "result_desc": result_desc,
+        "amount": amount,
+        "transaction_id": metadata.get("MpesaReceiptNumber"),
+        "transaction_date": metadata.get("TransactionDate"),
+        "phone": str(metadata.get("PhoneNumber", "")),
+        "status": "available" if result_code == 0 else "failed",
+        "raw_callback": data,
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await mpesa_transaction_collection.update_one(
+        {"checkout_request_id": checkout_request_id},
+        {"$set": transaction},
+        upsert=True,
+    )
+    logging.info("M-Pesa callback stored checkout=%s result=%s", checkout_request_id, result_code)
+    return {"ResultCode": 0, "ResultDesc": "Success"}
+
+
+@app.get("/api/mpesa/transactions/available")
+async def get_available_mpesa_transactions(amount: float = Query(...)):
+    rounded_amount = int(round(float(amount)))
+    cursor = mpesa_transaction_collection.find(
+        {
+            "status": "available",
+            "amount": rounded_amount,
+        }
+    ).sort("created_at", -1).limit(20)
+
+    transactions = []
+    async for transaction in cursor:
+        transaction_date = transaction.get("transaction_date")
+        if transaction_date:
+            transaction_date_text = str(transaction_date)
+            try:
+                transaction_date = datetime.strptime(transaction_date_text, "%Y%m%d%H%M%S").isoformat()
+            except ValueError:
+                transaction_date = transaction_date_text
+        else:
+            transaction_date = transaction.get("created_at", datetime.now(timezone.utc)).isoformat()
+
+        transactions.append({
+            "id": str(transaction.get("_id")),
+            "transaction_id": transaction.get("transaction_id", ""),
+            "checkout_request_id": transaction.get("checkout_request_id", ""),
+            "phone": transaction.get("phone", ""),
+            "amount": transaction.get("amount", 0),
+            "transaction_date": transaction_date,
+        })
+
+    return {"success": True, "transactions": transactions}
 
 
 @app.post("/loyalty/customer")

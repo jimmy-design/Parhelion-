@@ -1056,7 +1056,13 @@ function App({ currentUser, onLogout }) {
                         time: new Date().toLocaleString(),
                       });
                     } else {
-                      alert("STK Push failed: " + (data.message || "Please try again"));
+                      const errorMessage =
+                        data.message ||
+                        data.detail ||
+                        data.result?.errorMessage ||
+                        data.result?.ResponseDescription ||
+                        "Please try again";
+                      alert("STK Push failed: " + errorMessage);
                     }
                   } catch (err) {
                     alert("Error connecting to payment service. Please check your connection and try again.");
@@ -1183,7 +1189,7 @@ const validatePhoneNumber = (phone) => {
   }
   
   // Validate Kenyan phone number format
-  const phoneRegex = /^2547\d{8}$/;
+  const phoneRegex = /^254(?:7|1)\d{8}$/;
   return phoneRegex.test(formattedPhone) ? formattedPhone : null;
 };
 
