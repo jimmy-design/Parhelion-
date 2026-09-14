@@ -748,13 +748,14 @@ function getWindowIconPath() {
 
 function createWindow(appVariant) {
   const isErp = appVariant === "erp";
+  const isPos = appVariant === "pos";
   const icon = getWindowIconPath();
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     autoHideMenuBar: true,
     frame: !isErp,
-    fullscreen: isErp,
+    fullscreen: isErp || isPos,
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
