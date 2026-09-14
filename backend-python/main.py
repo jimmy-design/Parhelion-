@@ -5700,7 +5700,7 @@ async def stkpush(request: Request):
     consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
     shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE") or os.getenv("MPESA_SHORTCODE")
     passkey = os.getenv("MPESA_PASSKEY")
-    callback_url = os.getenv("MPESA_CALLBACK_URL")
+    callback_url = os.getenv("MPESA_CALLBACK_URL", "https://eastmatt.com/api/mpesa/callback").strip()
     mode = os.getenv("MPESA_MODE", "sandbox").lower()
     transaction_type = os.getenv("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")
 
@@ -5711,7 +5711,6 @@ async def stkpush(request: Request):
             "MPESA_CONSUMER_SECRET": consumer_secret,
             "MPESA_BUSINESS_SHORTCODE/MPESA_SHORTCODE": shortcode,
             "MPESA_PASSKEY": passkey,
-            "MPESA_CALLBACK_URL": callback_url,
         }.items()
         if not value
     ]

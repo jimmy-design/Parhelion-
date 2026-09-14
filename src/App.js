@@ -1043,7 +1043,15 @@ function App({ currentUser, onLogout }) {
 
                     const data = await res.json();
                     if (res.ok && data.success) {
-                      alert("STK Push sent successfully! Ask customer to enter PIN on phone.");
+                      const customerMessage =
+                        data.result?.CustomerMessage ||
+                        data.result?.ResponseDescription ||
+                        data.message ||
+                        "STK Push sent successfully";
+                      const checkoutRequestId = data.result?.CheckoutRequestID
+                        ? `\nCheckout Request ID: ${data.result.CheckoutRequestID}`
+                        : "";
+                      alert(`${customerMessage}${checkoutRequestId}`);
                       handleTenderChange("M-Pesa", mpesaData.amount.toFixed(2));
                       mpesaAvailabilityRequestRef.current += 1;
                       setCheckingMpesaTransactions(false);
