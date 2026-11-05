@@ -50,6 +50,8 @@ const buildTransactionPayload = ({ items, tenders, total, tax, currentUser }) =>
   store_id: Number(currentUser?.store_id || 1),
 });
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const PosWorkspace = memo(function PosWorkspace({
   items,
   inputValue,
@@ -1043,15 +1045,38 @@ function App({ currentUser, onLogout }) {
 
                     const data = await res.json();
                     if (res.ok && data.success) {
+                      const checkoutRequestIdValue = data.result?.CheckoutRequestID || "";
                       const customerMessage =
                         data.result?.CustomerMessage ||
                         data.result?.ResponseDescription ||
                         data.message ||
                         "STK Push sent successfully";
-                      const checkoutRequestId = data.result?.CheckoutRequestID
-                        ? `\nCheckout Request ID: ${data.result.CheckoutRequestID}`
+                      const checkoutRequestId = checkoutRequestIdValue
+                        ? `\nCheckout Request ID: ${checkoutRequestIdValue}`
                         : "";
                       alert(`${customerMessage}${checkoutRequestId}`);
+
+                      if (checkoutRequestIdValue) {
+                        await wait(18000);
+                        try {
+                          const queryRes = await apiFetch(
+                            `${API_BASE_URL}/api/mpesa/stkquery/${encodeURIComponent(checkoutRequestIdValue)}`
+                          );
+                          const queryData = await queryRes.json().catch(() => null);
+                          const statusMessage =
+                            queryData?.message ||
+                            queryData?.result?.ResultDesc ||
+                            queryData?.result?.errorMessage ||
+                            "Unable to confirm M-Pesa prompt status";
+
+                          if (!queryData?.success) {
+                            alert(`M-Pesa status: ${statusMessage}`);
+                          }
+                        } catch (queryError) {
+                          console.warn("M-Pesa STK status query failed:", queryError);
+                        }
+                      }
+
                       handleTenderChange("M-Pesa", mpesaData.amount.toFixed(2));
                       mpesaAvailabilityRequestRef.current += 1;
                       setCheckingMpesaTransactions(false);

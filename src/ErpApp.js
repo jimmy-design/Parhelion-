@@ -3,6 +3,7 @@ import QRCode from "qrcode";
 import "./ErpApp.css";
 import PriceChangeWorkspace from "./PriceChangeWorkspace";
 import AdjustmentsWorkspace from "./AdjustmentsWorkspace";
+import ReportsWorkspace from "./ReportsWorkspace";
 import ErpCustomSelect from "./ErpCustomSelect";
 import {
   LayoutDashboard,
@@ -8208,6 +8209,8 @@ function ErpApp({ currentUser, onLogout }) {
                   </div>
                 </aside>
               </div>
+            ) : activeNav === "reports" ? (
+              <ReportsWorkspace />
             ) : isDashboardView ? (
               <div className="erp-dashboard-overview">
                 <div className="erp-dashboard-stat-grid">

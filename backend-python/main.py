@@ -69,6 +69,8 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="POS Backend API", version="1.0.2")
+from business_reports import router as business_reports_router
+app.include_router(business_reports_router)
 
 
 @app.on_event("startup")
@@ -5699,10 +5701,11 @@ async def stkpush(request: Request):
     consumer_key = os.getenv("MPESA_CONSUMER_KEY")
     consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
     shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE") or os.getenv("MPESA_SHORTCODE")
+    party_b = os.getenv("MPESA_PARTYB") or os.getenv("MPESA_TILL_NUMBER") or shortcode
     passkey = os.getenv("MPESA_PASSKEY")
     callback_url = os.getenv("MPESA_CALLBACK_URL", "https://eastmatt.com/api/mpesa/callback").strip()
     mode = os.getenv("MPESA_MODE", "sandbox").lower()
-    transaction_type = os.getenv("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")
+    transaction_type = os.getenv("MPESA_TRANSACTION_TYPE", "CustomerBuyGoodsOnline")
 
     missing_config = [
         key
@@ -5710,6 +5713,7 @@ async def stkpush(request: Request):
             "MPESA_CONSUMER_KEY": consumer_key,
             "MPESA_CONSUMER_SECRET": consumer_secret,
             "MPESA_BUSINESS_SHORTCODE/MPESA_SHORTCODE": shortcode,
+            "MPESA_PARTYB/MPESA_TILL_NUMBER": party_b,
             "MPESA_PASSKEY": passkey,
         }.items()
         if not value
@@ -5757,7 +5761,7 @@ async def stkpush(request: Request):
         "TransactionType": transaction_type,
         "Amount": amount,
         "PartyA": phone,
-        "PartyB": shortcode,
+        "PartyB": party_b,
         "PhoneNumber": phone,
         "CallBackURL": callback_url,
         "AccountReference": (name or "POS_SALE")[:12],
@@ -5789,6 +5793,86 @@ async def stkpush(request: Request):
     return {
         "success": success,
         "message": result.get("ResponseDescription") or result.get("errorMessage") or ("STK push sent" if success else "STK push failed"),
+        "result": result,
+    }
+
+
+@app.get("/api/mpesa/stkquery/{checkout_request_id}")
+async def stkquery(checkout_request_id: str):
+    checkout_request_id = str(checkout_request_id or "").strip()
+    if not checkout_request_id:
+        raise HTTPException(status_code=400, detail="Checkout request ID is required")
+
+    consumer_key = os.getenv("MPESA_CONSUMER_KEY")
+    consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
+    shortcode = os.getenv("MPESA_BUSINESS_SHORTCODE") or os.getenv("MPESA_SHORTCODE")
+    passkey = os.getenv("MPESA_PASSKEY")
+    mode = os.getenv("MPESA_MODE", "sandbox").lower()
+
+    missing_config = [
+        key
+        for key, value in {
+            "MPESA_CONSUMER_KEY": consumer_key,
+            "MPESA_CONSUMER_SECRET": consumer_secret,
+            "MPESA_BUSINESS_SHORTCODE/MPESA_SHORTCODE": shortcode,
+            "MPESA_PASSKEY": passkey,
+        }.items()
+        if not value
+    ]
+    if missing_config:
+        raise HTTPException(
+            status_code=500,
+            detail=f"M-Pesa config missing: {', '.join(missing_config)}",
+        )
+
+    token_url = (
+        "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+        if mode == "live"
+        else "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+    )
+    try:
+        token_response = requests.get(token_url, auth=(consumer_key, consumer_secret), timeout=30)
+        token_data = token_response.json()
+    except requests.RequestException as exc:
+        logging.exception("M-Pesa query token request failed")
+        raise HTTPException(status_code=502, detail=f"Failed to contact M-Pesa auth service: {exc}") from exc
+    except ValueError as exc:
+        logging.exception("M-Pesa query token response was not JSON")
+        raise HTTPException(status_code=502, detail="M-Pesa auth returned an invalid response") from exc
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return {"success": False, "message": "Failed to get access token", "details": token_data}
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode("utf-8")
+    query_url = (
+        "https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+        if mode == "live"
+        else "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+    )
+    payload = {
+        "BusinessShortCode": shortcode,
+        "Password": password,
+        "Timestamp": timestamp,
+        "CheckoutRequestID": checkout_request_id,
+    }
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    try:
+        response = requests.post(query_url, json=payload, headers=headers, timeout=30)
+        result = response.json()
+    except requests.RequestException as exc:
+        logging.exception("M-Pesa STK query failed")
+        raise HTTPException(status_code=502, detail=f"Failed to contact M-Pesa STK query service: {exc}") from exc
+    except ValueError as exc:
+        logging.exception("M-Pesa STK query response was not JSON")
+        raise HTTPException(status_code=502, detail="M-Pesa STK query returned an invalid response") from exc
+
+    logging.info("Safaricom STK query status=%s body=%s", response.status_code, result)
+    return {
+        "success": response.status_code == 200 and not result.get("errorCode"),
+        "message": result.get("ResultDesc") or result.get("ResponseDescription") or result.get("errorMessage") or "STK query complete",
         "result": result,
     }
 
