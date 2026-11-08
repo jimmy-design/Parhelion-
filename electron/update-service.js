@@ -113,6 +113,9 @@ function isReleaseMetadataPendingError(error) {
 }
 
 function scheduleTransientReleaseRetry() {
+  if (transientReleaseRetryTimer) {
+    return transientReleaseRetryCount;
+  }
   if (transientReleaseRetryCount >= MAX_TRANSIENT_RELEASE_RETRIES) {
     return null;
   }
@@ -176,14 +179,18 @@ function isUpdaterConfigured() {
 }
 
 function handleUpdaterError(error) {
-  if (isReleaseMetadataPendingError(error)) {
+  const metadataPending = isReleaseMetadataPendingError(error);
+  const temporaryNetworkError = /\b(?:502|503|504)\b|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ERR_TIMED_OUT|ERR_CONNECTION_RESET/i.test(formatUpdaterError(error));
+  if (metadataPending || temporaryNetworkError) {
     const retryAttempt = scheduleTransientReleaseRetry();
     if (retryAttempt !== null) {
       const metadataFile = `${currentAppVariant}.yml`;
       return setUpdateState({
         status: "retrying",
         message:
-          `Release metadata (${metadataFile}) is still publishing on GitHub. ` +
+          (metadataPending
+            ? `Release metadata (${metadataFile}) is still publishing on GitHub. `
+            : "The update server is temporarily unavailable. ") +
           `Retrying automatically in 30 seconds (${retryAttempt}/${MAX_TRANSIENT_RELEASE_RETRIES}).`,
         checkedAt: new Date().toISOString(),
       });
@@ -192,7 +199,9 @@ function handleUpdaterError(error) {
 
   return setUpdateState({
     status: "error",
-    message: formatUpdaterError(error),
+    message: temporaryNetworkError
+      ? "The update server is still unavailable. Please try checking for updates again later."
+      : formatUpdaterError(error),
     checkedAt: new Date().toISOString(),
   });
 }
