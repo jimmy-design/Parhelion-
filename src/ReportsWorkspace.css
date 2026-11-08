@@ -1,3 +1,112 @@
-.bi-workspace{color:#20364a;width:100%;min-width:0;padding:8px}.bi-heading,.bi-table-tools,.bi-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.bi-eyebrow{font-size:11px;letter-spacing:2px;color:#118077;font-weight:700}.bi-heading h2{margin:8px 0;font-size:27px}.bi-workspace p,.bi-workspace small{color:#61758a;line-height:1.6}.bi-workspace button{border:1px solid #d5e0e9;background:white;border-radius:8px;padding:10px 16px;color:#21445c;cursor:pointer}.bi-workspace button:disabled{opacity:.5;cursor:default}.bi-filters{display:flex;flex-wrap:wrap;gap:18px;margin:24px 0;background:#edf4f8;padding:18px;border-radius:12px}.bi-filters label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600}.bi-workspace input{background:white;border:1px solid #cbd8e2;border-radius:6px;padding:10px;color:#20364a}.bi-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.bi-kpis article,.bi-panel,.bi-quality{background:white;border:1px solid #dce6ec;border-radius:12px;padding:20px}.bi-kpis article{display:flex;flex-direction:column;gap:10px;border-top:3px solid #128b80}.bi-kpis span{font-size:13px;color:#61758a}.bi-kpis strong{font-size:26px}.bi-panels{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;margin:20px 0}.bi-workspace h3{font-size:16px;margin:0 0 15px}.bi-chart{height:180px;display:flex;align-items:stretch;gap:4px;overflow-x:auto;padding:12px 0 25px}.bi-chart>div{flex:1;min-width:14px;position:relative;display:flex;align-items:flex-end}.bi-chart i{display:block;background:#168e88;width:100%;border-radius:3px 3px 0 0}.bi-chart small{position:absolute;bottom:-22px;font-size:9px;white-space:nowrap}.bi-quality{background:#f5f8fc;font-size:13px}.bi-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:22px 0 12px}.bi-tabs [aria-selected=true]{background:#17475c;color:white;border-color:#17475c}.bi-table-scroll{overflow:auto}.bi-workspace table{border-collapse:collapse;width:100%;font-size:13px}.bi-workspace th,.bi-workspace td{padding:13px 12px;text-align:left;border-bottom:1px solid #e5edf2}.bi-workspace th{text-transform:capitalize;color:#61758a;background:#f7fafc}.bi-table-tools{margin-bottom:16px}.bi-table-tools h3{margin:0;flex:1}.bi-pagination{margin-top:18px;font-size:12px}.bi-footnote{font-size:11px}.bi-error{background:#fff0ef;padding:16px;color:#a12a28!important}@media(max-width:1000px){.bi-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.bi-panels{grid-template-columns:1fr}}@media print{.bi-filters,.bi-tabs,.bi-workspace button,.bi-table-tools input{display:none}.bi-workspace{font-size:10px}.bi-kpis{grid-template-columns:repeat(3,1fr)}}
+.erp-report-quality{flex-shrink:0;font-size:12px;color:#64748b;padding:10px 14px;background:#f5f8fc;border:1px solid #d6e1ec;border-radius:8px;max-height:150px;overflow:auto}
+.erp-report-quality p{margin:4px 0}
+.erp-report-date-range { color: #c03939; font-weight: 600; }
+.erp-reports-content .erp-data-table tbody td.erp-report-money,
+.erp-reports-content output.erp-report-money {
+  font-weight: 900;
+}
 
-.bi-workspace{grid-column:1 / -1}
+.erp-product-toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
+.erp-product-report-select { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 290px; font-size: 12px; color: #587168; }
+.erp-product-report-select .erp-custom-select { flex: 1; min-width: 0; }
+.erp-product-report-select .erp-custom-select-trigger {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #d1dfd8;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fcfefc, #edf4ef);
+  box-shadow: inset 0 1px 0 #fff, 0 4px 12px #304d450a;
+}
+.erp-product-report-select .erp-custom-select-icon { stroke-width: 3.5; color: var(--erp-accent, #467d73); width: 18px; height: 18px; }
+.erp-product-report-select .erp-custom-select-menu {
+  box-sizing: border-box;
+  max-height: min(254px, 55vh);
+  padding: 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.erp-product-report-select .erp-custom-select-menu::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.erp-product-report-select .erp-custom-select-option { box-sizing: border-box; height: 40px; padding: 8px 10px; text-align: left; }
+.erp-product-toolbar .erp-search-input-group { flex: 1 1 180px; min-width: 0; }
+.erp-product-toolbar .erp-search-input { width: 100%; box-sizing: border-box; }
+.erp-product-toolbar .erp-search-actions { flex: 0 1 auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.erp-product-toolbar .erp-mini-btn { white-space: nowrap; }
+.erp-product-report-note { flex-shrink: 0; margin: 0; padding: 8px 12px; border: 1px solid #d5e2db; border-radius: 10px; background: #ffffff66; color: #587168; font-size: 12px; line-height: 1.5; }
+
+.erp-report-date-dialog {
+  width: min(290px, calc(100vw - 24px));
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #d3e3dc;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #fcfefc, #eaf2ed);
+  color: #263744;
+  box-shadow: 0 20px 65px rgba(32,58,55,.28), inset 0 1px 0 #fff;
+  backdrop-filter: none;
+}
+.erp-report-date-dialog::backdrop { background: transparent; backdrop-filter: none; }
+.erp-report-date-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.erp-report-date-dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; color: var(--erp-accent, #467d73); }
+.erp-report-date-close { display: inline-flex; border: none; background: transparent; color: #60766e; cursor: pointer; padding: 4px; border-radius: 50%; }
+.erp-report-date-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0; padding: 10px; border: 1px solid #c8d7d1; border-radius: 10px; }
+.erp-report-date-fields legend { padding: 0 6px; font-size: 12px; color: #587168; }
+.erp-report-date-fields label { display: grid; grid-template-columns: 65px minmax(0, 1fr); align-items: center; gap: 6px; font-size: 12px; color: #4b655d; }
+.erp-report-date-fields input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid #c8d7d1; border-radius: 8px; background: #ffffffb3; padding: 5px 6px; color: #304d45; font: inherit; }
+.erp-report-date-dialog :focus-visible { outline: 2px solid var(--erp-accent, #467d73); outline-offset: 2px; }
+.erp-report-date-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.erp-report-date-actions .erp-mini-btn { min-width: 50px; padding: 6px 12px; }
+.erp-report-date-reset, .erp-report-date-cancel { font: inherit; font-size: 12px; color: #587168; cursor: pointer; padding: 6px 8px; }
+.erp-report-date-reset { margin-right: auto; padding-left: 0; border: none; background: transparent; }
+.erp-report-date-cancel { border: 1px solid #c8d7d1; background: #ffffff80; border-radius: 20px; }
+.erp-report-calendar.is-active { box-shadow: 0 0 0 3px #467d7333; }
+.erp-report-date-fields { background: #ffffff70; box-shadow: inset 0 1px 0 #fff; }
+.erp-report-date-fields input { box-shadow: 0 2px 5px #304d4508; }
+.erp-report-date-close:hover, .erp-report-date-cancel:hover { background: #dfece5; }
+
+.erp-reports-content .erp-report-footer {
+  flex-shrink: 0;
+  margin-right: auto;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.erp-reports-content .erp-data-table {
+  table-layout: auto;
+  width: 100%;
+}
+
+.erp-reports-content .erp-data-table.is-live-summary tbody td:nth-child(4),
+.erp-reports-content .erp-data-table.is-live-summary tbody td:nth-child(5) {
+  font-weight: 700;
+}
+
+.erp-reports-content .erp-data-table thead th:nth-child(n),
+.erp-reports-content .erp-data-table tbody td:nth-child(n) {
+  width: auto;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.erp-reports-content .erp-table-wrap {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.erp-reports-content .erp-table-wrap::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.erp-reports-content .erp-table-wrap::-webkit-scrollbar-thumb {
+  background: #a5b7b3;
+  border-radius: 4px;
+}

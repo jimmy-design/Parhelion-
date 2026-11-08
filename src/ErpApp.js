@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import "./ErpApp.css";
 import PriceChangeWorkspace from "./PriceChangeWorkspace";
 import AdjustmentsWorkspace from "./AdjustmentsWorkspace";
-import ReportsWorkspace from "./ReportsWorkspace";
+import ReportsWorkspace, { REPORT_TABS } from "./ReportsWorkspace";
 import ErpCustomSelect from "./ErpCustomSelect";
 import {
   LayoutDashboard,
@@ -16,6 +16,9 @@ import {
   Landmark,
   Users,
   BarChart3,
+  TrendingUp,
+  Clock3,
+  ClipboardCheck,
   Settings,
   PackageSearch,
   UserRoundCog,
@@ -270,17 +273,9 @@ function getDefaultPriceChangeStoreId(currentUser) {
   return resolvePriceChangeStoreId(currentUser?.store_id, 1);
 }
 
-function formatPriceChangeBranchLabel(storeId) {
-  const normalizedStoreId = parsePriceChangeStoreId(storeId, 0);
-  if (normalizedStoreId <= 0) {
-    return "Default Database (Store 0)";
-  }
-
-  if (normalizedStoreId === 1) {
-    return "Main Store (Store ID 1)";
-  }
-
-  return `Branch ${normalizedStoreId} (Store ID ${normalizedStoreId})`;
+function formatPriceChangeBranchLabel(storeId, branches = []) {
+  const branch = branches.find(item => Number(item.store_id) === Number(storeId));
+  return String(branch?.name || "").trim() || "Branch name unavailable";
 }
 
 function buildPriceChangeStoreScopedPath(path, storeId) {
@@ -1225,7 +1220,7 @@ function buildPurchaseOrderShareText(preview) {
   ].join("\n");
 }
 
-function buildGoodsReceivedGrnHtml(grn, autoPrint = false) {
+function buildGoodsReceivedGrnHtml(grn, autoPrint = false, branchName = "Branch name unavailable") {
   const entries = Array.isArray(grn?.entries) ? grn.entries : [];
   const rowsHtml = entries.length
     ? entries
@@ -1392,7 +1387,7 @@ function buildGoodsReceivedGrnHtml(grn, autoPrint = false) {
               <div class="box">
                 <div class="row"><span>LPO No</span><span>${escapeHtml(grn?.po_number || "-")}</span></div>
                 <div class="row"><span>Supplier</span><span>${escapeHtml(grn?.supplier_name || "-")}</span></div>
-                <div class="row"><span>Store</span><span>${escapeHtml(grn?.store_id || "-")}</span></div>
+                <div class="row"><span>Store</span><span>${escapeHtml(branchName)}</span></div>
               </div>
               <div class="box">
                 <div class="row"><span>Received Date</span><span>${escapeHtml(formatDisplayDateValue(grn?.received_date, true))}</span></div>
@@ -2214,6 +2209,7 @@ function ErpApp({ currentUser, onLogout }) {
   const [activeInventoryTab, setActiveInventoryTab] = useState("stock-overview");
   const [activeToolsTab, setActiveToolsTab] = useState("gift-voucher-tool");
   const [activeFinanceTab, setActiveFinanceTab] = useState("bills-payment");
+  const [activeReportTab, setActiveReportTab] = useState("daily");
   const [shelfLabelItems, setShelfLabelItems] = useState([]);
   const [selectedShelfLabelRowId, setSelectedShelfLabelRowId] = useState("");
   const [showShelfLabelPreview, setShowShelfLabelPreview] = useState(false);
@@ -2405,6 +2401,20 @@ function ErpApp({ currentUser, onLogout }) {
   const isInventoryWorkspace = activeNav === "inventory";
   const isToolsWorkspace = activeNav === "tools";
   const isFinanceWorkspace = activeNav === "finance";
+  const isReportsWorkspace = activeNav === "reports";
+  const reportIcons = {
+    live: Clock3,
+    daily: TrendingUp,
+    products: PackageSearch,
+    categories: Tags,
+    hourly: Clock3,
+    cashiers: UserRoundCog,
+    tenders: WalletCards,
+    eod: ClipboardCheck,
+  };
+  const reportTones = { live: "tone-items", daily: "tone-items", products: "tone-suppliers", categories: "tone-categories", hourly: "tone-customers", cashiers: "tone-users", tenders: "tone-roles", eod: "tone-items" };
+  const reportTabs = Object.entries(REPORT_TABS).map(([id, label]) => ({ id, label, hint: "Transaction-based business reports", icon: reportIcons[id], tone: reportTones[id] }));
+  const selectedReportTab = reportTabs.find(tab => tab.id === activeReportTab) || reportTabs[0];
   const isWorkspaceView =
     activeNav === "managment" || isInventoryWorkspace || isToolsWorkspace || isFinanceWorkspace;
   const selectedManagementTab =
@@ -2413,7 +2423,9 @@ function ErpApp({ currentUser, onLogout }) {
     inventoryTabs.find((tab) => tab.id === activeInventoryTab) || inventoryTabs[0];
   const selectedToolsTab = toolsTabs.find((tab) => tab.id === activeToolsTab) || toolsTabs[0];
   const selectedFinanceTab = financeTabs.find((tab) => tab.id === activeFinanceTab) || financeTabs[0];
-  const selectedWorkspaceTab = isInventoryWorkspace
+  const selectedWorkspaceTab = isReportsWorkspace
+    ? selectedReportTab
+    : isInventoryWorkspace
     ? selectedInventoryTab
     : isToolsWorkspace
     ? selectedToolsTab
@@ -2457,7 +2469,9 @@ function ErpApp({ currentUser, onLogout }) {
       })),
     [suppliersRecords]
   );
-  const workspaceTabs = isInventoryWorkspace
+  const workspaceTabs = isReportsWorkspace
+    ? reportTabs
+    : isInventoryWorkspace
     ? inventoryTabs
     : isToolsWorkspace
     ? toolsTabs
@@ -3218,7 +3232,7 @@ function ErpApp({ currentUser, onLogout }) {
           return null;
         }
 
-        const branchName = String(branch?.name || "").trim() || formatPriceChangeBranchLabel(storeId);
+        const branchName = String(branch?.name || "").trim() || formatPriceChangeBranchLabel(storeId, priceChangeBranches);
         return {
           value: String(storeId),
           label: branchName,
@@ -3480,8 +3494,8 @@ function ErpApp({ currentUser, onLogout }) {
   const pagedUsersRecords = filteredUsersRecords.slice(startIndex, startIndex + rowsPerPage);
   const pagedCategoriesRecords = filteredCategoriesRecords.slice(startIndex, startIndex + rowsPerPage);
 
-  const title = isWorkspaceView ? `${activeItem.label} / ${selectedWorkspaceTab.label}` : activeItem.label;
-  const subtitle = isWorkspaceView ? selectedWorkspaceTab.hint : activeItem.hint;
+  const title = (isWorkspaceView || isReportsWorkspace) ? `${activeItem.label} / ${selectedWorkspaceTab.label}` : activeItem.label;
+  const subtitle = (isWorkspaceView || isReportsWorkspace) ? selectedWorkspaceTab.hint : activeItem.hint;
   const currentUserLabel = currentUser?.name || currentUser?.number || "Signed in";
   const currentUserRole = currentUser?.user_role || "Cashier";
   const fingerprintTargetUser =
@@ -3892,7 +3906,7 @@ function ErpApp({ currentUser, onLogout }) {
     if (missingLookupCodes.length) {
       pushAlert(
         "warning",
-        `Some items were not found in ${formatPriceChangeBranchLabel(normalizedStoreId)}: ${Array.from(
+        `Some items were not found in ${formatPriceChangeBranchLabel(normalizedStoreId, priceChangeBranches)}: ${Array.from(
           new Set(missingLookupCodes)
         ).join(", ")}.`
       );
@@ -4570,7 +4584,7 @@ function ErpApp({ currentUser, onLogout }) {
     );
     const supplier = String(selectedBillSupplier?.supplier_name || newBillForm.supplierName || "").trim();
     const location = String(
-      selectedBillLocation?.label || (locationStoreId ? `Store ${locationStoreId}` : "")
+      selectedBillLocation?.label || (locationStoreId ? formatPriceChangeBranchLabel(locationStoreId, priceChangeBranches) : "")
     ).trim();
 
     if (
@@ -5137,7 +5151,7 @@ function ErpApp({ currentUser, onLogout }) {
     }
 
     grnWindow.document.open();
-    grnWindow.document.write(buildGoodsReceivedGrnHtml(grn, autoPrint));
+    grnWindow.document.write(buildGoodsReceivedGrnHtml(grn, autoPrint, formatPriceChangeBranchLabel(grn.store_id, priceChangeBranches)));
     grnWindow.document.close();
     grnWindow.focus();
   };
@@ -5148,7 +5162,7 @@ function ErpApp({ currentUser, onLogout }) {
       return;
     }
 
-    const blob = new Blob([buildGoodsReceivedGrnHtml(grn)], { type: "text/html;charset=utf-8;" });
+    const blob = new Blob([buildGoodsReceivedGrnHtml(grn, false, formatPriceChangeBranchLabel(grn.store_id, priceChangeBranches))], { type: "text/html;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const safeName = String(grn.grn_number || "GRN").replace(/[^a-z0-9_-]+/gi, "_");
@@ -6917,9 +6931,8 @@ function ErpApp({ currentUser, onLogout }) {
   }, [isPriceChangeView, searchTerm]);
 
   useEffect(() => {
-    if (!isPriceChangeView) return;
     loadPriceChangeBranches();
-  }, [isPriceChangeView]);
+  }, []);
 
   useEffect(() => {
     if (!showAddPurchaseOrderForm || !isPurchaseOrdersView || isViewingPurchaseOrder) {
@@ -7162,7 +7175,7 @@ function ErpApp({ currentUser, onLogout }) {
 
       <main
         className={`erp-content ${isDashboardView ? "is-dashboard-view" : ""} ${
-          isWorkspaceView ? "is-workspace-view" : ""
+          (isWorkspaceView || isReportsWorkspace) ? "is-workspace-view" : ""
         }`.trim()}
       >
         <div className="erp-alerts">
@@ -7270,12 +7283,14 @@ function ErpApp({ currentUser, onLogout }) {
             )}
           </div>
         </header>
-        {isWorkspaceView && (
+        {(isWorkspaceView || isReportsWorkspace) && (
           <section
             className="erp-management-tabs"
             role="tablist"
             aria-label={
-              isInventoryWorkspace
+              isReportsWorkspace
+                ? "Reports sub menu"
+                : isInventoryWorkspace
                 ? "Inventory sub menu"
                 : isToolsWorkspace
                 ? "Tools sub menu"
@@ -7289,7 +7304,9 @@ function ErpApp({ currentUser, onLogout }) {
                 key={tab.id}
                 className={`erp-management-tab ${selectedWorkspaceTab.id === tab.id ? "is-active" : ""}`}
                 onClick={() => {
-                  if (isInventoryWorkspace) {
+                  if (isReportsWorkspace) {
+                    setActiveReportTab(tab.id);
+                  } else if (isInventoryWorkspace) {
                     setActiveInventoryTab(tab.id);
                   } else if (isToolsWorkspace) {
                     setActiveToolsTab(tab.id);
@@ -7327,7 +7344,7 @@ function ErpApp({ currentUser, onLogout }) {
         )}
 
         <section className="erp-panels">
-          <article className={`erp-panel erp-panel-large ${!isWorkspaceView ? "erp-home-card" : ""}`.trim()}>
+          <article className={`erp-panel erp-panel-large ${!(isWorkspaceView || isReportsWorkspace) ? "erp-home-card" : ""}`.trim()}>
             {isWorkspaceView ? (
               <div className="erp-management-content">
                 <div className="erp-search-wrap">
@@ -8210,7 +8227,7 @@ function ErpApp({ currentUser, onLogout }) {
                 </aside>
               </div>
             ) : activeNav === "reports" ? (
-              <ReportsWorkspace />
+              <ReportsWorkspace tab={activeReportTab} storeId={Number(currentUser?.store_id || 1)} />
             ) : isDashboardView ? (
               <div className="erp-dashboard-overview">
                 <div className="erp-dashboard-stat-grid">
@@ -8267,7 +8284,7 @@ function ErpApp({ currentUser, onLogout }) {
               </p>
             )}
           </article>
-          {!isWorkspaceView && activeNav !== "settings" && (
+          {isDashboardView && (
             <>
               {isDashboardView ? (
                 <article className="erp-panel erp-home-card erp-category-sales-card">
